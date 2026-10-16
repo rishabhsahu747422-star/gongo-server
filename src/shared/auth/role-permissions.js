@@ -1,0 +1,110 @@
+'use strict';
+
+const { ROLES } = require('./roles.enum');
+const { PERMISSIONS } = require('./permissions.enum');
+
+/**
+ * Canonical Role-to-Permissions Mapping.
+ *
+ * Defines the default granular permission grants assigned to each canonical role.
+ */
+const ROLE_PERMISSIONS = Object.freeze({
+  [ROLES.CUSTOMER]: Object.freeze([
+    PERMISSIONS.CUSTOMER_PROFILE_READ,
+    PERMISSIONS.CUSTOMER_PROFILE_UPDATE,
+    PERMISSIONS.CUSTOMER_ADDRESS_READ,
+    PERMISSIONS.CUSTOMER_ADDRESS_MANAGE,
+    PERMISSIONS.CUSTOMER_DOCUMENT_UPLOAD,
+    PERMISSIONS.VEHICLE_READ,
+    PERMISSIONS.BOOKING_READ,
+    PERMISSIONS.BOOKING_CREATE,
+    PERMISSIONS.BOOKING_CANCEL,
+    PERMISSIONS.PAYMENT_CREATE,
+    PERMISSIONS.PAYMENT_VERIFY,
+    PERMISSIONS.PAYMENT_READ,
+  ]),
+
+  [ROLES.PARTNER]: Object.freeze([
+    PERMISSIONS.PARTNER_PROFILE_READ,
+    PERMISSIONS.PARTNER_PROFILE_UPDATE,
+    PERMISSIONS.PARTNER_KYC_SUBMIT,
+    PERMISSIONS.PARTNER_BANK_MANAGE,
+    PERMISSIONS.PARTNER_EARNINGS_READ,
+    PERMISSIONS.PARTNER_PAYOUT_REQUEST,
+    PERMISSIONS.VEHICLE_READ,
+    PERMISSIONS.VEHICLE_CREATE,
+    PERMISSIONS.VEHICLE_UPDATE,
+    PERMISSIONS.VEHICLE_DELETE,
+    PERMISSIONS.BOOKING_READ,
+    PERMISSIONS.BOOKING_UPDATE,
+  ]),
+
+  [ROLES.ADMIN]: Object.freeze([
+    PERMISSIONS.ADMIN_DASHBOARD_READ,
+    PERMISSIONS.ADMIN_USERS_MANAGE,
+    PERMISSIONS.ADMIN_AUDIT_READ,
+    PERMISSIONS.ADMIN_SETTINGS_MANAGE,
+    PERMISSIONS.ADMIN_DISPUTES_RESOLVE,
+    PERMISSIONS.ADMIN_SUPPORT_MANAGE,
+    PERMISSIONS.ADMIN_NOTIFICATIONS_SEND,
+    PERMISSIONS.PARTNER_KYC_VERIFY,
+    PERMISSIONS.PARTNER_PAYOUT_APPROVE,
+    PERMISSIONS.VEHICLE_READ,
+    PERMISSIONS.VEHICLE_VERIFY,
+    PERMISSIONS.BOOKING_READ,
+    PERMISSIONS.BOOKING_UPDATE,
+    PERMISSIONS.BOOKING_CANCEL,
+    PERMISSIONS.PAYMENT_READ,
+    PERMISSIONS.PAYMENT_REFUND,
+    PERMISSIONS.COMMISSION_MANAGE,
+    PERMISSIONS.PLATFORM_FEE_MANAGE,
+    PERMISSIONS.CUSTOMER_PROFILE_READ,
+    PERMISSIONS.PARTNER_PROFILE_READ,
+    PERMISSIONS.PARTNER_EARNINGS_READ,
+  ]),
+
+  [ROLES.SUPER_ADMIN]: Object.freeze(Object.values(PERMISSIONS)),
+
+  [ROLES.SUPPORT_EXECUTIVE]: Object.freeze([
+    PERMISSIONS.ADMIN_DASHBOARD_READ,
+    PERMISSIONS.CUSTOMER_PROFILE_READ,
+    PERMISSIONS.PARTNER_PROFILE_READ,
+    PERMISSIONS.VEHICLE_READ,
+    PERMISSIONS.BOOKING_READ,
+    PERMISSIONS.ADMIN_SUPPORT_MANAGE,
+    PERMISSIONS.ADMIN_DISPUTES_RESOLVE,
+  ]),
+});
+
+/**
+ * Checks whether a given role holds a specific permission.
+ *
+ * @param {string} role Canonical role string
+ * @param {string} permission Canonical permission string
+ * @returns {boolean}
+ */
+function roleHasPermission(role, permission) {
+  if (!role || !permission) return false;
+  if (role === ROLES.SUPER_ADMIN) return true;
+  const permissions = ROLE_PERMISSIONS[role];
+  if (!permissions) return false;
+  return permissions.includes(permission);
+}
+
+/**
+ * Gets all permissions granted to a given role.
+ *
+ * @param {string} role Canonical role string
+ * @returns {string[]}
+ */
+function getPermissionsForRole(role) {
+  if (!role) return [];
+  if (role === ROLES.SUPER_ADMIN) return Object.values(PERMISSIONS);
+  return ROLE_PERMISSIONS[role] || [];
+}
+
+module.exports = {
+  ROLE_PERMISSIONS,
+  roleHasPermission,
+  getPermissionsForRole,
+};

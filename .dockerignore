@@ -1,0 +1,13 @@
+**/node_modules
+**/.env
+**/.env.*
+!.env.example
+**/*.log
+**/tests
+**/scratch
+**/coverage
+.smoke
+.claude
+.git
+docs
+**/*.md

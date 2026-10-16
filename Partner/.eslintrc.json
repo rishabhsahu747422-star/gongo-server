@@ -1,0 +1,44 @@
+{
+  "env": {
+    "node": true,
+    "es2022": true,
+    "jest": true
+  },
+  "extends": ["airbnb-base"],
+  "parserOptions": {
+    "ecmaVersion": 2022,
+    "sourceType": "script"
+  },
+  "rules": {
+    "no-console": "error",
+    "strict": ["error", "safe"],
+    "max-classes-per-file": "off",
+    "quote-props": "off",
+    "object-curly-newline": "off",
+    "no-unused-vars": ["error", { "argsIgnorePattern": "^_" }],
+    "consistent-return": "off",
+    "no-underscore-dangle": "off",
+    "class-methods-use-this": "off",
+    "no-param-reassign": ["error", { "props": false }],
+    "import/no-unresolved": ["error", { "ignore": ["^firebase-admin/"] }],
+    "import/no-extraneous-dependencies": [
+      "error",
+      {
+        "devDependencies": [
+          "tests/**/*.js",
+          "jest.config.js",
+          "src/providers/redis.js"
+        ]
+      }
+    ]
+  },
+  "overrides": [
+    {
+      "files": ["tests/**/*.js"],
+      "rules": {
+        "no-await-in-loop": "off"
+      }
+    }
+  ],
+  "ignorePatterns": ["node_modules/", "coverage/", "dist/"]
+}

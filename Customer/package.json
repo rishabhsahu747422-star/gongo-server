@@ -1,0 +1,69 @@
+{
+  "name": "gongo-customer-backend",
+  "version": "1.0.0",
+  "description": "GONGO Customer Backend — Production marketplace backend for vehicle rental platform",
+  "main": "src/server.js",
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js",
+    "lint": "eslint \"src/**/*.js\" \"tests/**/*.js\" \"database/**/*.js\"",
+    "lint:fix": "eslint \"src/**/*.js\" \"tests/**/*.js\" \"database/**/*.js\" --fix",
+    "test": "jest --runInBand --forceExit",
+    "test:unit": "jest tests/unit --runInBand --forceExit",
+    "test:integration": "jest tests/integration --runInBand --forceExit",
+    "test:security": "jest tests/security --runInBand --forceExit",
+    "test:db": "jest tests/integration/database --runInBand --forceExit",
+    "test:coverage": "jest --runInBand --forceExit --coverage",
+    "test:load": "node tests/load/run-load-tests.js",
+    "test:smoke": "jest tests/smoke --runInBand --forceExit",
+    "migrate:up": "node-pg-migrate -m database/migrations --envPath .env up",
+    "migrate:down": "node-pg-migrate -m database/migrations --envPath .env down",
+    "migrate:create": "node-pg-migrate -m database/migrations create",
+    "migrate:status": "node-pg-migrate -m database/migrations status"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.624.0",
+    "@aws-sdk/s3-request-presigner": "^3.1136.0",
+    "@supabase/supabase-js": "^2.117.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.6.1",
+    "envalid": "^8.0.0",
+    "express": "^4.19.2",
+    "firebase-admin": "^14.4.0",
+    "helmet": "^7.1.0",
+    "http-graceful-shutdown": "^3.1.13",
+    "ioredis": "^5.11.1",
+    "morgan": "^1.10.0",
+    "node-pg-migrate": "^9.0.0",
+    "pg": "^8.12.0",
+    "razorpay": "^2.9.4",
+    "uuid": "^11.1.1",
+    "winston": "^3.14.1"
+  },
+  "devDependencies": {
+    "autocannon": "^8.0.0",
+    "eslint": "^8.57.0",
+    "eslint-config-airbnb-base": "^15.0.0",
+    "eslint-plugin-import": "^2.29.1",
+    "ioredis-mock": "^8.13.1",
+    "jest": "^29.7.0",
+    "nodemon": "^3.1.4",
+    "pg-mem": "^3.0.14",
+    "supertest": "^7.0.0"
+  },
+  "keywords": [
+    "gongo",
+    "vehicle-rental",
+    "marketplace",
+    "backend",
+    "express",
+    "postgresql"
+  ],
+  "author": "GONGO",
+  "license": "UNLICENSED",
+  "private": true
+}

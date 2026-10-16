@@ -1,0 +1,668 @@
+{
+  "rls": [
+    {
+      "tablename": "admin_actions",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "areas",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "audit_logs",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "booking_cancellations",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "booking_customer_details",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "booking_items",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "booking_pickup",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "booking_price_breakdown",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "booking_return",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "booking_status_history",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "bookings",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "cancellation_policies",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "cities",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "commission_rules",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "commission_transactions",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "coupon_redemptions",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "coupon_rules",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "coupons",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "customer_documents",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "customer_identity_verifications",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "customer_profiles",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "customer_saved_addresses",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "dispute_evidence",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "disputes",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "notification_templates",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "notifications",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "offer_shops",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "offer_vehicles",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "offers",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "outbox_events",
+      "rowsecurity": false
+    },
+    {
+      "tablename": "partner_bank_accounts",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "partner_documents",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "partner_kyc",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "partner_payouts",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "partner_verification_history",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "partner_wallets",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "partners",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "payment_attempts",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "payment_events",
+      "rowsecurity": false
+    },
+    {
+      "tablename": "payment_transactions",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "payment_webhooks",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "payments",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "payout_transactions",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "refund_transactions",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "refunds",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "rental_agreements",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "review_replies",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "review_reports",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "reviews",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "schema_migrations",
+      "rowsecurity": false
+    },
+    {
+      "tablename": "shop_documents",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "shop_images",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "shop_operating_hours",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "shop_verification_history",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "shops",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "states",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "storage_uploads",
+      "rowsecurity": false
+    },
+    {
+      "tablename": "support_attachments",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "support_messages",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "support_tickets",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "ticket_status_history",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "user_devices",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "user_notification_preferences",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "users",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "vehicle_availability",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "vehicle_blocked_periods",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "vehicle_brands",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "vehicle_categories",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "vehicle_documents",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "vehicle_extra_charges",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "vehicle_feature_values",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "vehicle_features",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "vehicle_images",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "vehicle_models",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "vehicle_pricing",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "vehicle_pricing_rules",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "vehicles",
+      "rowsecurity": true
+    },
+    {
+      "tablename": "wallet_transactions",
+      "rowsecurity": true
+    }
+  ],
+  "triggers": [
+    {
+      "table_name": "areas",
+      "trigger_name": "trg_set_updated_at",
+      "event_manipulation": "UPDATE",
+      "action_timing": "BEFORE",
+      "action_statement": "EXECUTE FUNCTION set_updated_at()"
+    },
+    {
+      "table_name": "booking_pickup",
+      "trigger_name": "trg_set_updated_at",
+      "event_manipulation": "UPDATE",
+      "action_timing": "BEFORE",
+      "action_statement": "EXECUTE FUNCTION set_updated_at()"
+    },
+    {
+      "table_name": "booking_return",
+      "trigger_name": "trg_set_updated_at",
+      "event_manipulation": "UPDATE",
+      "action_timing": "BEFORE",
+      "action_statement": "EXECUTE FUNCTION set_updated_at()"
+    },
+    {
+      "table_name": "bookings",
+      "trigger_name": "trg_set_updated_at",
+      "event_manipulation": "UPDATE",
+      "action_timing": "BEFORE",
+      "action_statement": "EXECUTE FUNCTION set_updated_at()"
+    },
+    {
+      "table_name": "cancellation_policies",
+      "trigger_name": "trg_set_updated_at",
+      "event_manipulation": "UPDATE",
+      "action_timing": "BEFORE",
+      "action_statement": "EXECUTE FUNCTION set_updated_at()"
+    },
+    {
+      "table_name": "cities",
+      "trigger_name": "trg_set_updated_at",
+      "event_manipulation": "UPDATE",
+      "action_timing": "BEFORE",
+      "action_statement": "EXECUTE FUNCTION set_updated_at()"
+    },
+    {
+      "table_name": "commission_rules",
+      "trigger_name": "trg_set_updated_at",
+      "event_manipulation": "UPDATE",
+      "action_timing": "BEFORE",
+      "action_statement": "EXECUTE FUNCTION set_updated_at()"
+    },
+    {
+      "table_name": "coupon_rules",
+      "trigger_name": "trg_set_updated_at",
+      "event_manipulation": "UPDATE",
+      "action_timing": "BEFORE",
+      "action_statement": "EXECUTE FUNCTION set_updated_at()"
+    },
+    {
+      "table_name": "coupons",
+      "trigger_name": "trg_set_updated_at",
+      "event_manipulation": "UPDATE",
+      "action_timing": "BEFORE",
+      "action_statement": "EXECUTE FUNCTION set_updated_at()"
+    },
+    {
+      "table_name": "customer_documents",
+      "trigger_name": "trg_set_updated_at",
+      "event_manipulation": "UPDATE",
+      "action_timing": "BEFORE",
+      "action_statement": "EXECUTE FUNCTION set_updated_at()"
+    },
+    {
+      "table_name": "customer_identity_verifications",
+      "trigger_name": "trg_set_updated_at",
+      "event_manipulation": "UPDATE",
+      "action_timing": "BEFORE",
+      "action_statement": "EXECUTE FUNCTION set_updated_at()"
+    },
+    {
+      "table_name": "customer_profiles",
+      "trigger_name": "trg_set_updated_at",
+      "event_manipulation": "UPDATE",
+      "action_timing": "BEFORE",
+      "action_statement": "EXECUTE FUNCTION set_updated_at()"
+    },
+    {
+      "table_name": "customer_saved_addresses",
+      "trigger_name": "trg_set_updated_at",
+      "event_manipulation": "UPDATE",
+      "action_timing": "BEFORE",
+      "action_statement": "EXECUTE FUNCTION set_updated_at()"
+    },
+    {
+      "table_name": "disputes",
+      "trigger_name": "trg_set_updated_at",
+      "event_manipulation": "UPDATE",
+      "action_timing": "BEFORE",
+      "action_statement": "EXECUTE FUNCTION set_updated_at()"
+    },
+    {
+      "table_name": "notification_templates",
+      "trigger_name": "trg_set_updated_at",
+      "event_manipulation": "UPDATE",
+      "action_timing": "BEFORE",
+      "action_statement": "EXECUTE FUNCTION set_updated_at()"
+    },
+    {
+      "table_name": "offers",
+      "trigger_name": "trg_set_updated_at",
+      "event_manipulation": "UPDATE",
+      "action_timing": "BEFORE",
+      "action_statement": "EXECUTE FUNCTION set_updated_at()"
+    },
+    {
+      "table_name": "partner_bank_accounts",
+      "trigger_name": "trg_set_updated_at",
+      "event_manipulation": "UPDATE",
+      "action_timing": "BEFORE",
+      "action_statement": "EXECUTE FUNCTION set_updated_at()"
+    },
+    {
+      "table_name": "partner_documents",
+      "trigger_name": "trg_set_updated_at",
+      "event_manipulation": "UPDATE",
+      "action_timing": "BEFORE",
+      "action_statement": "EXECUTE FUNCTION set_updated_at()"
+    },
+    {
+      "table_name": "partner_kyc",
+      "trigger_name": "trg_set_updated_at",
+      "event_manipulation": "UPDATE",
+      "action_timing": "BEFORE",
+      "action_statement": "EXECUTE FUNCTION set_updated_at()"
+    },
+    {
+      "table_name": "partner_payouts",
+      "trigger_name": "trg_set_updated_at",
+      "event_manipulation": "UPDATE",
+      "action_timing": "BEFORE",
+      "action_statement": "EXECUTE FUNCTION set_updated_at()"
+    },
+    {
+      "table_name": "partner_wallets",
+      "trigger_name": "trg_set_updated_at",
+      "event_manipulation": "UPDATE",
+      "action_timing": "BEFORE",
+      "action_statement": "EXECUTE FUNCTION set_updated_at()"
+    },
+    {
+      "table_name": "partners",
+      "trigger_name": "trg_set_updated_at",
+      "event_manipulation": "UPDATE",
+      "action_timing": "BEFORE",
+      "action_statement": "EXECUTE FUNCTION set_updated_at()"
+    },
+    {
+      "table_name": "payments",
+      "trigger_name": "trg_set_updated_at",
+      "event_manipulation": "UPDATE",
+      "action_timing": "BEFORE",
+      "action_statement": "EXECUTE FUNCTION set_updated_at()"
+    },
+    {
+      "table_name": "refunds",
+      "trigger_name": "trg_set_updated_at",
+      "event_manipulation": "UPDATE",
+      "action_timing": "BEFORE",
+      "action_statement": "EXECUTE FUNCTION set_updated_at()"
+    },
+    {
+      "table_name": "rental_agreements",
+      "trigger_name": "trg_set_updated_at",
+      "event_manipulation": "UPDATE",
+      "action_timing": "BEFORE",
+      "action_statement": "EXECUTE FUNCTION set_updated_at()"
+    },
+    {
+      "table_name": "review_replies",
+      "trigger_name": "trg_set_updated_at",
+      "event_manipulation": "UPDATE",
+      "action_timing": "BEFORE",
+      "action_statement": "EXECUTE FUNCTION set_updated_at()"
+    },
+    {
+      "table_name": "review_reports",
+      "trigger_name": "trg_set_updated_at",
+      "event_manipulation": "UPDATE",
+      "action_timing": "BEFORE",
+      "action_statement": "EXECUTE FUNCTION set_updated_at()"
+    },
+    {
+      "table_name": "reviews",
+      "trigger_name": "trg_set_updated_at",
+      "event_manipulation": "UPDATE",
+      "action_timing": "BEFORE",
+      "action_statement": "EXECUTE FUNCTION set_updated_at()"
+    },
+    {
+      "table_name": "shop_documents",
+      "trigger_name": "trg_set_updated_at",
+      "event_manipulation": "UPDATE",
+      "action_timing": "BEFORE",
+      "action_statement": "EXECUTE FUNCTION set_updated_at()"
+    },
+    {
+      "table_name": "shop_images",
+      "trigger_name": "trg_set_updated_at",
+      "event_manipulation": "UPDATE",
+      "action_timing": "BEFORE",
+      "action_statement": "EXECUTE FUNCTION set_updated_at()"
+    },
+    {
+      "table_name": "shop_operating_hours",
+      "trigger_name": "trg_set_updated_at",
+      "event_manipulation": "UPDATE",
+      "action_timing": "BEFORE",
+      "action_statement": "EXECUTE FUNCTION set_updated_at()"
+    },
+    {
+      "table_name": "shops",
+      "trigger_name": "trg_set_updated_at",
+      "event_manipulation": "UPDATE",
+      "action_timing": "BEFORE",
+      "action_statement": "EXECUTE FUNCTION set_updated_at()"
+    },
+    {
+      "table_name": "states",
+      "trigger_name": "trg_set_updated_at",
+      "event_manipulation": "UPDATE",
+      "action_timing": "BEFORE",
+      "action_statement": "EXECUTE FUNCTION set_updated_at()"
+    },
+    {
+      "table_name": "support_tickets",
+      "trigger_name": "trg_set_updated_at",
+      "event_manipulation": "UPDATE",
+      "action_timing": "BEFORE",
+      "action_statement": "EXECUTE FUNCTION set_updated_at()"
+    },
+    {
+      "table_name": "user_devices",
+      "trigger_name": "trg_set_updated_at",
+      "event_manipulation": "UPDATE",
+      "action_timing": "BEFORE",
+      "action_statement": "EXECUTE FUNCTION set_updated_at()"
+    },
+    {
+      "table_name": "user_notification_preferences",
+      "trigger_name": "trg_set_updated_at",
+      "event_manipulation": "UPDATE",
+      "action_timing": "BEFORE",
+      "action_statement": "EXECUTE FUNCTION set_updated_at()"
+    },
+    {
+      "table_name": "users",
+      "trigger_name": "trg_set_updated_at",
+      "event_manipulation": "UPDATE",
+      "action_timing": "BEFORE",
+      "action_statement": "EXECUTE FUNCTION set_updated_at()"
+    },
+    {
+      "table_name": "vehicle_availability",
+      "trigger_name": "trg_set_updated_at",
+      "event_manipulation": "UPDATE",
+      "action_timing": "BEFORE",
+      "action_statement": "EXECUTE FUNCTION set_updated_at()"
+    },
+    {
+      "table_name": "vehicle_blocked_periods",
+      "trigger_name": "trg_set_updated_at",
+      "event_manipulation": "UPDATE",
+      "action_timing": "BEFORE",
+      "action_statement": "EXECUTE FUNCTION set_updated_at()"
+    },
+    {
+      "table_name": "vehicle_brands",
+      "trigger_name": "trg_set_updated_at",
+      "event_manipulation": "UPDATE",
+      "action_timing": "BEFORE",
+      "action_statement": "EXECUTE FUNCTION set_updated_at()"
+    },
+    {
+      "table_name": "vehicle_categories",
+      "trigger_name": "trg_set_updated_at",
+      "event_manipulation": "UPDATE",
+      "action_timing": "BEFORE",
+      "action_statement": "EXECUTE FUNCTION set_updated_at()"
+    },
+    {
+      "table_name": "vehicle_documents",
+      "trigger_name": "trg_set_updated_at",
+      "event_manipulation": "UPDATE",
+      "action_timing": "BEFORE",
+      "action_statement": "EXECUTE FUNCTION set_updated_at()"
+    },
+    {
+      "table_name": "vehicle_extra_charges",
+      "trigger_name": "trg_set_updated_at",
+      "event_manipulation": "UPDATE",
+      "action_timing": "BEFORE",
+      "action_statement": "EXECUTE FUNCTION set_updated_at()"
+    },
+    {
+      "table_name": "vehicle_feature_values",
+      "trigger_name": "trg_set_updated_at",
+      "event_manipulation": "UPDATE",
+      "action_timing": "BEFORE",
+      "action_statement": "EXECUTE FUNCTION set_updated_at()"
+    },
+    {
+      "table_name": "vehicle_features",
+      "trigger_name": "trg_set_updated_at",
+      "event_manipulation": "UPDATE",
+      "action_timing": "BEFORE",
+      "action_statement": "EXECUTE FUNCTION set_updated_at()"
+    },
+    {
+      "table_name": "vehicle_images",
+      "trigger_name": "trg_set_updated_at",
+      "event_manipulation": "UPDATE",
+      "action_timing": "BEFORE",
+      "action_statement": "EXECUTE FUNCTION set_updated_at()"
+    },
+    {
+      "table_name": "vehicle_models",
+      "trigger_name": "trg_set_updated_at",
+      "event_manipulation": "UPDATE",
+      "action_timing": "BEFORE",
+      "action_statement": "EXECUTE FUNCTION set_updated_at()"
+    },
+    {
+      "table_name": "vehicle_pricing",
+      "trigger_name": "trg_set_updated_at",
+      "event_manipulation": "UPDATE",
+      "action_timing": "BEFORE",
+      "action_statement": "EXECUTE FUNCTION set_updated_at()"
+    },
+    {
+      "table_name": "vehicle_pricing_rules",
+      "trigger_name": "trg_set_updated_at",
+      "event_manipulation": "UPDATE",
+      "action_timing": "BEFORE",
+      "action_statement": "EXECUTE FUNCTION set_updated_at()"
+    },
+    {
+      "table_name": "vehicles",
+      "trigger_name": "trg_set_updated_at",
+      "event_manipulation": "UPDATE",
+      "action_timing": "BEFORE",
+      "action_statement": "EXECUTE FUNCTION set_updated_at()"
+    }
+  ]
+}

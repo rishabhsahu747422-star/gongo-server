@@ -1,0 +1,62 @@
+{
+  "name": "gongo-partner-backend",
+  "version": "1.0.0",
+  "description": "GONGO Partner Backend — Production-grade marketplace backend for vehicle rental partners",
+  "main": "src/server.js",
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js",
+    "lint": "eslint \"src/**/*.js\" \"tests/**/*.js\"",
+    "lint:fix": "eslint \"src/**/*.js\" \"tests/**/*.js\" --fix",
+    "test": "jest --runInBand --forceExit",
+    "test:unit": "jest tests/unit --runInBand --forceExit",
+    "test:integration": "jest tests/integration --runInBand --forceExit",
+    "test:coverage": "jest --runInBand --forceExit --coverage",
+    "test:db": "jest tests/integration/database --runInBand --forceExit",
+    "test:security": "jest tests/security --runInBand --forceExit",
+    "db:migrate": "node src/db/migrator.js up",
+    "db:migrate:status": "node src/db/migrator.js status",
+    "db:migrate:rollback": "node src/db/migrator.js down",
+    "seed:partner-dev": "node scripts/seed_partner_dev.js",
+    "test:partner-flow": "node scripts/test_partner_business_flow.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.117.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "envalid": "^8.0.0",
+    "express": "^4.19.2",
+    "helmet": "^7.1.0",
+    "ioredis": "^5.4.1",
+    "morgan": "^1.10.0",
+    "pg": "^8.12.0",
+    "uuid": "^9.0.1",
+    "winston": "^3.14.1"
+  },
+  "devDependencies": {
+    "eslint": "^8.57.0",
+    "eslint-config-airbnb-base": "^15.0.0",
+    "eslint-plugin-import": "^2.29.1",
+    "ioredis-mock": "^8.13.1",
+    "jest": "^29.7.0",
+    "nodemon": "^3.1.4",
+    "pg-mem": "^3.0.14",
+    "supertest": "^7.0.0"
+  },
+  "keywords": [
+    "gongo",
+    "partner",
+    "vehicle-rental",
+    "marketplace",
+    "backend",
+    "express",
+    "postgresql"
+  ],
+  "author": "GONGO",
+  "license": "UNLICENSED",
+  "private": true
+}

@@ -1,3 +1,0 @@
-const data = {
-  server: creation,
-};

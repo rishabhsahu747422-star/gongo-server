@@ -1,0 +1,33 @@
+# Version control
+.git
+.gitignore
+
+# Environment files and credentials
+.env
+.env*
+!.env.example
+
+# Dependencies and lockfiles
+node_modules
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Test and development files
+tests
+coverage
+.nyc_output
+*.test.js
+*.spec.js
+jest.config.js
+.eslintrc.json
+
+# Documentation and project artifacts
+docs
+README.md
+brain
+scratch
+
+# OS generated files
+.DS_Store
+Thumbs.db
