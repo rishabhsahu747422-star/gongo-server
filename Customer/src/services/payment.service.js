@@ -334,7 +334,10 @@ class PaymentService {
     const pStatus = (payment.status || '').toLowerCase();
     if (pStatus === 'pending' || pStatus === 'in_progress') {
       try {
-        const orderStatus = await this.provider.getOrderStatus(payment.providerOrderId);
+        const orderStatus = await this.provider.getOrderStatus(payment.providerOrderId, {
+          bookingId,
+          paymentId: payment.id,
+        });
         if (orderStatus && (orderStatus.orderStatus === 'PAID' || orderStatus.orderStatus === 'SUCCESS')) {
           // Same locked path and side effects as the webhook (booking confirmation,
           // vehicle BOOKED, partner earnings, notifications), so whichever of the two
@@ -401,7 +404,7 @@ class PaymentService {
         const isExpired = (Date.now() - paymentInitiatedAt) >= PAYMENT_TIMEOUT_MS;
 
         if (isExpired && (payment.status || '').toLowerCase() !== 'paid' && (payment.status || '').toLowerCase() !== 'success') {
-          if (!orderStatus || orderStatus.orderStatus === 'ACTIVE') {
+          if (!orderStatus || orderStatus.orderStatus === 'ACTIVE' || orderStatus.orderStatus === 'NOT_FOUND' || orderStatus.notFound) {
             await this.paymentRepository.transaction(async (client) => {
               const lockedPayment = await this.paymentRepository.lockByProviderOrderId(
                 payment.providerOrderId,
@@ -1372,29 +1375,54 @@ class PaymentService {
 
     const resolvedReason = cancellationReason || failureReason || 'PAYMENT_FAILED';
 
-    // 4. Transition booking to cancelled
+    // 4. Transition booking to cancelled defensively across schema variations
+    let updatedBooking = false;
     try {
       await withSavepoint(client, 'sp_booking_cancel', () => client.query(
         `UPDATE bookings
          SET status = 'cancelled',
-             booking_status = 'CANCELLED',
              cancellation_reason = $1,
              cancelled_at = CURRENT_TIMESTAMP,
              updated_at = CURRENT_TIMESTAMP
          WHERE id = $2`,
         [resolvedReason, booking.id],
       ));
-    } catch (updateErr) {
-      await client.query(
-        `UPDATE bookings
-         SET status = 'cancelled',
-             cancellation_reason = $1,
-             cancelled_at = CURRENT_TIMESTAMP,
-             updated_at = CURRENT_TIMESTAMP
-         WHERE id = $2`,
-        [resolvedReason, booking.id],
-      );
+      updatedBooking = true;
+    } catch (_) {}
+
+    if (!updatedBooking) {
+      try {
+        await withSavepoint(client, 'sp_booking_cancel_fallback', () => client.query(
+          `UPDATE bookings
+           SET status = 'cancelled',
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = $1`,
+          [booking.id],
+        ));
+        updatedBooking = true;
+      } catch (_) {
+        try {
+          await withSavepoint(client, 'sp_booking_cancel_bstatus_only', () => client.query(
+            `UPDATE bookings
+             SET booking_status = 'CANCELLED',
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE id = $1`,
+            [booking.id],
+          ));
+          updatedBooking = true;
+        } catch (_) {}
+      }
     }
+
+    // Also sync optional booking_status column if present
+    try {
+      await withSavepoint(client, 'sp_booking_cancel_bstatus', () => client.query(
+        `UPDATE bookings
+         SET booking_status = 'CANCELLED'
+         WHERE id = $1`,
+        [booking.id],
+      ));
+    } catch (_) {}
 
     // 5. Insert into booking_cancellations
     try {
@@ -1663,7 +1691,8 @@ class PaymentService {
   async simulateCashfreeWebhook({ customerId, bookingId, orderId, paymentStatus = 'SUCCESS' }) {
     // Disabled in production regardless of Cashfree mode: it marks the caller's own
     // booking paid without any real payment.
-    if (process.env.NODE_ENV === 'production' || env.NODE_ENV === 'production') {
+    const isCashfreeProd = (this.provider?.envMode || '').toUpperCase() === 'PRODUCTION';
+    if (process.env.NODE_ENV === 'production' || env.NODE_ENV === 'production' || isCashfreeProd) {
       throw new ForbiddenError('Test webhook simulation is disabled in production', 'FORBIDDEN');
     }
 
@@ -1736,7 +1765,8 @@ class PaymentService {
    * @returns {Promise<object>}
    */
   async devBypassPayment(customerId, bookingId) {
-    const isProd = process.env.NODE_ENV === 'production' || env.NODE_ENV === 'production';
+    const isCashfreeProd = (this.provider?.envMode || '').toUpperCase() === 'PRODUCTION';
+    const isProd = process.env.NODE_ENV === 'production' || env.NODE_ENV === 'production' || isCashfreeProd;
     const isDevFlagEnabled =
       (Boolean(env.DEV_DUMMY_PAYMENT_ENABLED) || process.env.DEV_DUMMY_PAYMENT_ENABLED === 'true') &&
       process.env.DEV_DUMMY_PAYMENT_ENABLED !== 'false';

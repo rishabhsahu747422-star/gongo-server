@@ -34,6 +34,21 @@ const ALLOWED_PRICING_FIELDS = Object.freeze([
   'extraKmCharge',
   'extra_km_charge',
   'currency',
+  'kmLimitPerDay',
+  'km_limit_per_day',
+  'kmLimit24Hours',
+  'km_limit_24_hours',
+  'kmLimitDay',
+  'kmLimitPerHour',
+  'km_limit_per_hour',
+  'kmLimit1Hour',
+  'km_limit_1_hour',
+  'kmLimit3Hours',
+  'km_limit_3_hours',
+  'kmLimit6Hours',
+  'km_limit_6_hours',
+  'kmLimit12Hours',
+  'km_limit_12_hours',
 ]);
 
 class PricingValidator {
@@ -105,6 +120,28 @@ class PricingValidator {
       ? body.extraKmCharge
       : body.extra_km_charge;
     const rawCurrency = body.currency;
+
+    const rawKmLimitPerDay = body.kmLimitPerDay !== undefined
+      ? body.kmLimitPerDay
+      : (body.km_limit_per_day !== undefined
+        ? body.km_limit_per_day
+        : (body.kmLimit24Hours !== undefined
+          ? body.kmLimit24Hours
+          : (body.km_limit_24_hours !== undefined ? body.km_limit_24_hours : body.kmLimitDay)));
+    const rawKmLimitPerHour = body.kmLimitPerHour !== undefined
+      ? body.kmLimitPerHour
+      : (body.km_limit_per_hour !== undefined
+        ? body.km_limit_per_hour
+        : (body.kmLimit1Hour !== undefined ? body.kmLimit1Hour : body.km_limit_1_hour));
+    const rawKmLimit3Hours = body.kmLimit3Hours !== undefined
+      ? body.kmLimit3Hours
+      : body.km_limit_3_hours;
+    const rawKmLimit6Hours = body.kmLimit6Hours !== undefined
+      ? body.kmLimit6Hours
+      : body.km_limit_6_hours;
+    const rawKmLimit12Hours = body.kmLimit12Hours !== undefined
+      ? body.kmLimit12Hours
+      : body.km_limit_12_hours;
 
     // 1. pricePerDay (Primary rental rate)
     let pricePerDay = null;
@@ -228,6 +265,71 @@ class PricingValidator {
       }
     }
 
+    // 10. kmLimitPerDay
+    let kmLimitPerDay = null;
+    if (rawKmLimitPerDay !== undefined && rawKmLimitPerDay !== null && rawKmLimitPerDay !== '') {
+      const num = Number(rawKmLimitPerDay);
+      if (Number.isNaN(num) || !Number.isFinite(num) || num < 0) {
+        errors.push({ field: 'kmLimitPerDay', message: 'kmLimitPerDay must be a non-negative number' });
+      } else if (num > 100000) {
+        errors.push({ field: 'kmLimitPerDay', message: 'kmLimitPerDay cannot exceed 100,000' });
+      } else {
+        kmLimitPerDay = Number(num.toFixed(2));
+      }
+    }
+
+    // 11. kmLimitPerHour
+    let kmLimitPerHour = null;
+    if (rawKmLimitPerHour !== undefined && rawKmLimitPerHour !== null && rawKmLimitPerHour !== '') {
+      const num = Number(rawKmLimitPerHour);
+      if (Number.isNaN(num) || !Number.isFinite(num) || num < 0) {
+        errors.push({ field: 'kmLimitPerHour', message: 'kmLimitPerHour must be a non-negative number' });
+      } else if (num > 100000) {
+        errors.push({ field: 'kmLimitPerHour', message: 'kmLimitPerHour cannot exceed 100,000' });
+      } else {
+        kmLimitPerHour = Number(num.toFixed(2));
+      }
+    }
+
+    // 12. kmLimit3Hours
+    let kmLimit3Hours = null;
+    if (rawKmLimit3Hours !== undefined && rawKmLimit3Hours !== null && rawKmLimit3Hours !== '') {
+      const num = Number(rawKmLimit3Hours);
+      if (Number.isNaN(num) || !Number.isFinite(num) || num < 0) {
+        errors.push({ field: 'kmLimit3Hours', message: 'kmLimit3Hours must be a non-negative number' });
+      } else if (num > 100000) {
+        errors.push({ field: 'kmLimit3Hours', message: 'kmLimit3Hours cannot exceed 100,000' });
+      } else {
+        kmLimit3Hours = Number(num.toFixed(2));
+      }
+    }
+
+    // 13. kmLimit6Hours
+    let kmLimit6Hours = null;
+    if (rawKmLimit6Hours !== undefined && rawKmLimit6Hours !== null && rawKmLimit6Hours !== '') {
+      const num = Number(rawKmLimit6Hours);
+      if (Number.isNaN(num) || !Number.isFinite(num) || num < 0) {
+        errors.push({ field: 'kmLimit6Hours', message: 'kmLimit6Hours must be a non-negative number' });
+      } else if (num > 100000) {
+        errors.push({ field: 'kmLimit6Hours', message: 'kmLimit6Hours cannot exceed 100,000' });
+      } else {
+        kmLimit6Hours = Number(num.toFixed(2));
+      }
+    }
+
+    // 14. kmLimit12Hours
+    let kmLimit12Hours = null;
+    if (rawKmLimit12Hours !== undefined && rawKmLimit12Hours !== null && rawKmLimit12Hours !== '') {
+      const num = Number(rawKmLimit12Hours);
+      if (Number.isNaN(num) || !Number.isFinite(num) || num < 0) {
+        errors.push({ field: 'kmLimit12Hours', message: 'kmLimit12Hours must be a non-negative number' });
+      } else if (num > 100000) {
+        errors.push({ field: 'kmLimit12Hours', message: 'kmLimit12Hours cannot exceed 100,000' });
+      } else {
+        kmLimit12Hours = Number(num.toFixed(2));
+      }
+    }
+
     if (errors.length > 0) {
       throw new ValidationError('Pricing validation failed', errors, ERROR_CODES.VALIDATION_ERROR);
     }
@@ -239,6 +341,11 @@ class PricingValidator {
       price12Hours,
       pricePer4Hours,
       pricePerDay,
+      kmLimitPerDay,
+      kmLimitPerHour,
+      kmLimit3Hours,
+      kmLimit6Hours,
+      kmLimit12Hours,
       securityDeposit,
       extraKmCharge,
       currency,

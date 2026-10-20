@@ -93,6 +93,9 @@ class BookingRepository extends BaseRepository {
         : null,
       pricingSnapshot: {
         pricePerHour: row.price_per_hour !== null && row.price_per_hour !== undefined ? Number(row.price_per_hour) : null,
+        price3Hours: row.price_3_hours !== null && row.price_3_hours !== undefined ? Number(row.price_3_hours) : null,
+        price6Hours: row.price_6_hours !== null && row.price_6_hours !== undefined ? Number(row.price_6_hours) : null,
+        price12Hours: row.price_12_hours !== null && row.price_12_hours !== undefined ? Number(row.price_12_hours) : null,
         pricePerDay: row.price_per_day !== null && row.price_per_day !== undefined ? Number(row.price_per_day) : null,
         pricePerWeek: row.price_per_week !== null && row.price_per_week !== undefined ? Number(row.price_per_week) : null,
         pricePerMonth: row.price_per_month !== null && row.price_per_month !== undefined ? Number(row.price_per_month) : null,
@@ -105,6 +108,7 @@ class BookingRepository extends BaseRepository {
         taxAmount: Number(row.tax_amount || 0),
         gst: Number(row.tax_amount || 0),
         convenienceFee: Number(row.convenience_fee || 0),
+        serviceCharge: Number(row.service_charge || 0),
         payableAmount: row.payable_amount !== undefined && row.payable_amount !== null
           ? Number(row.payable_amount)
           : (row.payableAmount !== undefined && row.payableAmount !== null
@@ -120,6 +124,15 @@ class BookingRepository extends BaseRepository {
         billableDurationHours: row.billable_duration_hours || row.billableDurationHours || null,
         pricingBreakdown: row.pricing_breakdown || row.pricingBreakdown || null,
       },
+
+      payableAmount: Number(
+        row.payable_amount !== undefined && row.payable_amount !== null
+          ? row.payable_amount
+          : (row.payableAmount !== undefined && row.payableAmount !== null
+            ? row.payableAmount
+            : Math.max(0, Number(row.total_amount || 0) - Number(row.security_deposit || 0)))
+      ),
+      totalAmount: Number(row.total_amount || 0),
 
       // Cancellation
       cancellation: (row.status === 'CANCELLED' || row.status === 'cancelled' || row.cancelled_at) ? {
@@ -139,6 +152,10 @@ class BookingRepository extends BaseRepository {
             : (row.cancellation_refund_status || row.refund_status || (Number(row.refund_amount || row.eligible_refund_amount || 0) > 0 ? 'PENDING' : 'NOT_REQUIRED')),
         policyName: row.cancellation_policy_name || row.policy_name || null,
       } : null,
+
+      cancellationReason: row.cancellation_reason || (row.cancellation && row.cancellation.reason) || null,
+      paymentInitiatedAt: row.payment_initiated_at ? (row.payment_initiated_at instanceof Date ? row.payment_initiated_at.toISOString() : row.payment_initiated_at) : null,
+      paymentProviderOrderId: row.payment_provider_order_id || null,
 
       createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
       updatedAt: row.updated_at instanceof Date ? row.updated_at.toISOString() : row.updated_at,
@@ -208,6 +225,9 @@ class BookingRepository extends BaseRepository {
           COALESCE(v.model, 'Model') AS model,
           COALESCE(vc.code, UPPER(v.category), 'BIKE') AS category_slug,
           COALESCE(vp.price_per_hour, (vp.price / 10.0))::numeric AS price_per_hour,
+          vp.price_3_hours::numeric AS price_3_hours,
+          vp.price_6_hours::numeric AS price_6_hours,
+          vp.price_12_hours::numeric AS price_12_hours,
           COALESCE(vp.price_per_day, vp.price, 500)::numeric AS price_per_day,
           COALESCE(vp.security_deposit, 1000)::numeric AS security_deposit,
           50::numeric AS late_fee_per_hour,
@@ -345,6 +365,9 @@ class BookingRepository extends BaseRepository {
           v.is_active,
           v.verification_status,
           COALESCE(vp.price_per_hour, (vp.price / 10.0))::numeric AS price_per_hour,
+          vp.price_3_hours::numeric AS price_3_hours,
+          vp.price_6_hours::numeric AS price_6_hours,
+          vp.price_12_hours::numeric AS price_12_hours,
           COALESCE(vp.price_per_day, vp.price, 500)::numeric AS price_per_day,
           COALESCE(vp.security_deposit, 1000)::numeric AS security_deposit,
           50::numeric AS late_fee_per_hour,
@@ -635,6 +658,8 @@ class BookingRepository extends BaseRepository {
 
       return BookingRepository.mapBookingDto({
         ...booking,
+        total_amount: totalAmount,
+        payable_amount: data.payableAmount || totalAmount,
         pickup_otp: pickupOtp,
         rental_type: data.rentalType,
         pickup_address: data.pickupAddress,
@@ -726,6 +751,22 @@ class BookingRepository extends BaseRepository {
           bc.refund_status AS cancellation_refund_status,
           bc.upi_id AS cancellation_upi_id,
           bc.policy_name AS cancellation_policy_name,
+          (
+            SELECT p.created_at
+            FROM payments p
+            WHERE p.booking_id = b.id
+              AND (p.payment_type = 'BOOKING_ADVANCE' OR p.payment_type IS NULL)
+            ORDER BY p.created_at DESC
+            LIMIT 1
+          ) AS payment_initiated_at,
+          (
+            SELECT p.provider_order_id
+            FROM payments p
+            WHERE p.booking_id = b.id
+              AND (p.payment_type = 'BOOKING_ADVANCE' OR p.payment_type IS NULL)
+            ORDER BY p.created_at DESC
+            LIMIT 1
+          ) AS payment_provider_order_id,
           bpv.verification_reference AS pickup_otp,
           bpv.is_verified AS pickup_verified,
           EXISTS(SELECT 1 FROM ratings r WHERE r.booking_id = b.id) AS is_rated,
@@ -890,11 +931,11 @@ class BookingRepository extends BaseRepository {
       if (statusUpper === 'ACTIVE' || statusUpper === 'IN_PROGRESS' || statusUpper === 'ACTIVE_RENTAL') {
         conditions.push(`(b.status IN ('in_progress', 'vehicle_picked', 'ACTIVE', 'active', 'IN_PROGRESS'))`);
       } else if (statusUpper === 'UPCOMING' || statusUpper === 'CONFIRMED') {
-        conditions.push(`(b.status IN ('confirmed', 'pickup_scheduled', 'initiated', 'payment_completed', 'CONFIRMED', 'PENDING', 'UPCOMING') AND b.status NOT IN ('payment_pending', 'PAYMENT_PENDING'))`);
+        conditions.push(`(b.status IN ('confirmed', 'pickup_scheduled', 'initiated', 'payment_completed', 'CONFIRMED', 'PENDING', 'UPCOMING', 'payment_pending', 'PAYMENT_PENDING'))`);
       } else if (statusUpper === 'COMPLETED') {
         conditions.push(`(b.status IN ('completed', 'returned', 'COMPLETED', 'RETURNED'))`);
       } else if (statusUpper === 'CANCELLED') {
-        conditions.push(`(b.status IN ('cancelled', 'refunded', 'CANCELLED', 'REFUNDED', 'payment_pending', 'PAYMENT_PENDING'))`);
+        conditions.push(`(b.status IN ('cancelled', 'refunded', 'CANCELLED', 'REFUNDED'))`);
       } else {
         conditions.push(`(b.status = $${paramIdx} OR LOWER(b.status) = LOWER($${paramIdx}))`);
         params.push(status);
@@ -932,6 +973,22 @@ class BookingRepository extends BaseRepository {
           bc.refund_status AS cancellation_refund_status,
           bc.upi_id AS cancellation_upi_id,
           bc.policy_name AS cancellation_policy_name,
+          (
+            SELECT p.created_at
+            FROM payments p
+            WHERE p.booking_id = b.id
+              AND (p.payment_type = 'BOOKING_ADVANCE' OR p.payment_type IS NULL)
+            ORDER BY p.created_at DESC
+            LIMIT 1
+          ) AS payment_initiated_at,
+          (
+            SELECT p.provider_order_id
+            FROM payments p
+            WHERE p.booking_id = b.id
+              AND (p.payment_type = 'BOOKING_ADVANCE' OR p.payment_type IS NULL)
+            ORDER BY p.created_at DESC
+            LIMIT 1
+          ) AS payment_provider_order_id,
           EXISTS(SELECT 1 FROM ratings r WHERE r.booking_id = b.id) AS is_rated,
           COALESCE(
             brv.returned_at,
@@ -1038,6 +1095,7 @@ class BookingRepository extends BaseRepository {
    */
   async updateStatus(bookingId, customerId, newStatus, extraFields = {}, client = null) {
     const runner = client || this;
+    const { cancellationReason } = extraFields || {};
 
     let res;
     try {
@@ -1056,6 +1114,7 @@ class BookingRepository extends BaseRepository {
               WHEN LOWER($1::text) IN ('confirmed', 'payment_completed', 'pickup_scheduled', 'active', 'in_progress', 'completed') THEN 'PAID'
               ELSE payment_status
             END,
+            cancellation_reason = COALESCE($4, cancellation_reason),
             updated_at = CURRENT_TIMESTAMP
         WHERE id = $2 AND customer_id = $3
         RETURNING *
@@ -1064,20 +1123,40 @@ class BookingRepository extends BaseRepository {
         newStatus,
         bookingId,
         customerId,
+        cancellationReason || null,
       ]);
     } catch {
-      const fallbackText = `
-        UPDATE bookings
-        SET status = $1,
-            updated_at = CURRENT_TIMESTAMP
-        WHERE id = $2 AND customer_id = $3
-        RETURNING *
-      `;
-      res = await runner.query(fallbackText, [
-        newStatus,
-        bookingId,
-        customerId,
-      ]);
+      try {
+        const textWithoutReason = `
+          UPDATE bookings
+          SET status = LOWER($1::text),
+              booking_status = CASE 
+                WHEN LOWER($1::text) IN ('confirmed', 'payment_completed', 'pickup_scheduled') THEN 'CONFIRMED'
+                WHEN LOWER($1::text) IN ('active', 'in_progress', 'vehicle_picked') THEN 'ACTIVE'
+                WHEN LOWER($1::text) IN ('completed', 'returned') THEN 'COMPLETED'
+                WHEN LOWER($1::text) IN ('cancelled', 'refunded') THEN 'CANCELLED'
+                WHEN LOWER($1::text) IN ('pending_payment', 'payment_pending') THEN 'PENDING_PAYMENT'
+                ELSE UPPER($1::text)
+              END,
+              payment_status = CASE
+                WHEN LOWER($1::text) IN ('confirmed', 'payment_completed', 'pickup_scheduled', 'active', 'in_progress', 'completed') THEN 'PAID'
+                ELSE payment_status
+              END,
+              updated_at = CURRENT_TIMESTAMP
+          WHERE id = $2 AND customer_id = $3
+          RETURNING *
+        `;
+        res = await runner.query(textWithoutReason, [newStatus, bookingId, customerId]);
+      } catch {
+        const fallbackText = `
+          UPDATE bookings
+          SET status = $1,
+              updated_at = CURRENT_TIMESTAMP
+          WHERE id = $2 AND customer_id = $3
+          RETURNING *
+        `;
+        res = await runner.query(fallbackText, [newStatus, bookingId, customerId]);
+      }
     }
 
     if (!res.rows[0]) return null;

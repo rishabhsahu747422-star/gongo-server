@@ -140,6 +140,21 @@ const ALLOWED_CREATE_FIELDS = Object.freeze([
   'security_deposit',
   'extraKmCharge',
   'extra_km_charge',
+  'kmLimitPerDay',
+  'km_limit_per_day',
+  'kmLimit24Hours',
+  'km_limit_24_hours',
+  'kmLimitDay',
+  'kmLimitPerHour',
+  'km_limit_per_hour',
+  'kmLimit1Hour',
+  'km_limit_1_hour',
+  'kmLimit3Hours',
+  'km_limit_3_hours',
+  'kmLimit6Hours',
+  'km_limit_6_hours',
+  'kmLimit12Hours',
+  'km_limit_12_hours',
   'currency',
   'pricing',
   'images',
@@ -402,6 +417,40 @@ class VehicleValidator {
       ? body.currency
       : nestedPricing.currency;
 
+    const rawKmLimitPerDay = body.kmLimitPerDay !== undefined
+      ? body.kmLimitPerDay
+      : (body.km_limit_per_day !== undefined
+        ? body.km_limit_per_day
+        : (body.kmLimit24Hours !== undefined
+          ? body.kmLimit24Hours
+          : (body.km_limit_24_hours !== undefined
+            ? body.km_limit_24_hours
+            : nestedPricing.kmLimitPerDay ?? nestedPricing.km_limit_per_day ?? nestedPricing.kmLimit24Hours ?? nestedPricing.km_limit_24_hours ?? nestedPricing.kmLimitDay)));
+    const rawKmLimitPerHour = body.kmLimitPerHour !== undefined
+      ? body.kmLimitPerHour
+      : (body.km_limit_per_hour !== undefined
+        ? body.km_limit_per_hour
+        : (body.kmLimit1Hour !== undefined
+          ? body.kmLimit1Hour
+          : (body.km_limit_1_hour !== undefined
+            ? body.km_limit_1_hour
+            : nestedPricing.kmLimitPerHour ?? nestedPricing.km_limit_per_hour ?? nestedPricing.kmLimit1Hour ?? nestedPricing.km_limit_1_hour)));
+    const rawKmLimit3Hours = body.kmLimit3Hours !== undefined
+      ? body.kmLimit3Hours
+      : (body.km_limit_3_hours !== undefined
+        ? body.km_limit_3_hours
+        : nestedPricing.kmLimit3Hours ?? nestedPricing.km_limit_3_hours);
+    const rawKmLimit6Hours = body.kmLimit6Hours !== undefined
+      ? body.kmLimit6Hours
+      : (body.km_limit_6_hours !== undefined
+        ? body.km_limit_6_hours
+        : nestedPricing.kmLimit6Hours ?? nestedPricing.km_limit_6_hours);
+    const rawKmLimit12Hours = body.kmLimit12Hours !== undefined
+      ? body.kmLimit12Hours
+      : (body.km_limit_12_hours !== undefined
+        ? body.km_limit_12_hours
+        : nestedPricing.kmLimit12Hours ?? nestedPricing.km_limit_12_hours);
+
     const hasPricingField = rawPricePerDay !== undefined
       || rawPricePerHour !== undefined
       || rawPrice3Hours !== undefined
@@ -411,6 +460,11 @@ class VehicleValidator {
       || rawSecurityDeposit !== undefined
       || rawExtraKmCharge !== undefined
       || rawCurrency !== undefined
+      || rawKmLimitPerDay !== undefined
+      || rawKmLimitPerHour !== undefined
+      || rawKmLimit3Hours !== undefined
+      || rawKmLimit6Hours !== undefined
+      || rawKmLimit12Hours !== undefined
       || (body.pricing && typeof body.pricing === 'object');
 
     if (hasPricingField) {
@@ -448,6 +502,21 @@ class VehicleValidator {
         && rawExtraKmCharge !== null
         && rawExtraKmCharge !== '') {
         pricingPayload.extraKmCharge = rawExtraKmCharge;
+      }
+      if (rawKmLimitPerDay !== undefined && rawKmLimitPerDay !== null && rawKmLimitPerDay !== '') {
+        pricingPayload.kmLimitPerDay = rawKmLimitPerDay;
+      }
+      if (rawKmLimitPerHour !== undefined && rawKmLimitPerHour !== null && rawKmLimitPerHour !== '') {
+        pricingPayload.kmLimitPerHour = rawKmLimitPerHour;
+      }
+      if (rawKmLimit3Hours !== undefined && rawKmLimit3Hours !== null && rawKmLimit3Hours !== '') {
+        pricingPayload.kmLimit3Hours = rawKmLimit3Hours;
+      }
+      if (rawKmLimit6Hours !== undefined && rawKmLimit6Hours !== null && rawKmLimit6Hours !== '') {
+        pricingPayload.kmLimit6Hours = rawKmLimit6Hours;
+      }
+      if (rawKmLimit12Hours !== undefined && rawKmLimit12Hours !== null && rawKmLimit12Hours !== '') {
+        pricingPayload.kmLimit12Hours = rawKmLimit12Hours;
       }
       if (rawCurrency !== undefined && rawCurrency !== null && rawCurrency !== '') {
         pricingPayload.currency = rawCurrency;

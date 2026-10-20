@@ -91,5 +91,7 @@ router.use('/api/v1/pricing', forwardTo(customerApp));
 router.use('/api/v1/coupons', forwardTo(customerApp));
 router.use('/api/v1/payments', forwardTo(customerApp));
 router.use(['/api/v1/platform-fee', '/customer/platform-fee'], forwardTo(customerApp));
+router.use('/api/v1/banners', forwardTo(customerApp));
+router.use('/api/v1/offers', forwardTo(customerApp));
 
 module.exports = router;

@@ -3,6 +3,7 @@
 const paymentService = require('../services/payment.service');
 const { sendSuccess } = require('../utils/response');
 const { HTTP_STATUS } = require('../constants/http');
+const { ForbiddenError } = require('../errors');
 
 /**
  * PaymentController — HTTP adapter for payment initiation, status, and webhook handling.
@@ -130,6 +131,9 @@ class PaymentController {
    */
   async simulateTestWebhook(req, res, next) {
     try {
+      if (process.env.NODE_ENV === 'production' || String(paymentService.provider?.envMode).toUpperCase() === 'PRODUCTION') {
+        throw new ForbiddenError('Test webhook simulation is not permitted in production', 'SIMULATION_FORBIDDEN_IN_PRODUCTION');
+      }
       const { bookingId, orderId, paymentStatus = 'SUCCESS' } = req.body;
       const result = await paymentService.simulateCashfreeWebhook({
         customerId: req.user.id,
@@ -149,6 +153,9 @@ class PaymentController {
    */
   async devBypassPayment(req, res, next) {
     try {
+      if (process.env.NODE_ENV === 'production' || String(paymentService.provider?.envMode).toUpperCase() === 'PRODUCTION') {
+        throw new ForbiddenError('Payment dev bypass is strictly disabled in production', 'BYPASS_FORBIDDEN_IN_PRODUCTION');
+      }
       const { bookingId } = req.body;
       if (!bookingId) {
         return res.status(HTTP_STATUS.BAD_REQUEST).json({
@@ -183,12 +190,15 @@ class PaymentController {
       );
 
       const status = isIdempotentReplay ? HTTP_STATUS.OK : HTTP_STATUS.CREATED;
+      const cashfreeEnv = paymentService.provider?.envMode || 'SANDBOX';
       return sendSuccess(res, {
         orderId: payment.providerOrderId || payment.id,
         paymentSessionId: payment.paymentSessionId || payment.metadata?.paymentSessionId,
         amount: payment.amount,
         currency: payment.currency || 'INR',
-        payment,
+        payment: withCashfreeEnvironment(payment),
+        cashfreeEnvironment: cashfreeEnv,
+        environment: cashfreeEnv,
       }, 'Payment order created successfully', status);
     } catch (err) {
       return next(err);
@@ -212,22 +222,6 @@ class PaymentController {
       }
       const payment = await paymentService.getPaymentStatus(req.user.id, bookingId);
       return sendSuccess(res, { payment: withCashfreeEnvironment(payment) }, 'Payment status retrieved successfully', HTTP_STATUS.OK);
-    } catch (err) {
-      return next(err);
-    }
-  }
-
-  async devBypassPayment(req, res, next) {
-    try {
-      const bookingId = req.body?.bookingId || req.params?.bookingId;
-      if (!bookingId) {
-        return res.status(HTTP_STATUS.BAD_REQUEST).json({
-          success: false,
-          message: 'bookingId is required to bypass payment',
-        });
-      }
-      const result = await paymentService.devBypassPayment(req.user.id, bookingId);
-      return sendSuccess(res, result, 'Dev payment bypass successful', HTTP_STATUS.OK);
     } catch (err) {
       return next(err);
     }

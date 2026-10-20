@@ -328,6 +328,9 @@ if (env.NODE_ENV === 'production') {
   if (!env.CASHFREE_SECRET_KEY || env.CASHFREE_SECRET_KEY === 'test_cashfree_secret_key') {
     problems.push('CASHFREE_SECRET_KEY must be set to a real value in production');
   }
+  if (String(env.CASHFREE_ENV).toUpperCase() !== 'PRODUCTION') {
+    problems.push('CASHFREE_ENV must be set to PRODUCTION in production');
+  }
   if (env.CUSTOMER_DEV_AUTH_ENABLED) {
     problems.push('CUSTOMER_DEV_AUTH_ENABLED must not be enabled in production');
   }

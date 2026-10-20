@@ -43,11 +43,14 @@ class AdminOfferRepository extends BaseRepository {
       const countSql = `SELECT COUNT(*)::int AS total FROM offers ${whereClause};`;
       const dataSql = `
         SELECT id, name, description, offer_type, discount_type, discount_value,
-               max_discount_amount AS max_discount, max_discount_amount, valid_from, valid_until,
+               max_discount_amount AS max_discount, max_discount_amount,
+               min_booking_amount, code, image_url, storage_path, display_order,
+               cta_label, cta_destination, metadata,
+               valid_from, valid_until,
                is_active AS active, is_active, created_by, created_at, updated_at
         FROM offers
         ${whereClause}
-        ORDER BY created_at DESC
+        ORDER BY display_order ASC, created_at DESC
         LIMIT $${pIdx} OFFSET $${pIdx + 1};
       `;
 
@@ -74,7 +77,10 @@ class AdminOfferRepository extends BaseRepository {
     try {
       const sql = `
         SELECT id, name, description, offer_type, discount_type, discount_value,
-               max_discount_amount AS max_discount, max_discount_amount, valid_from, valid_until,
+               max_discount_amount AS max_discount, max_discount_amount,
+               min_booking_amount, code, image_url, storage_path, display_order,
+               cta_label, cta_destination, metadata,
+               valid_from, valid_until,
                is_active AS active, is_active, created_by, created_at, updated_at
         FROM offers
         WHERE id = $1
@@ -128,10 +134,15 @@ class AdminOfferRepository extends BaseRepository {
     const sql = `
       INSERT INTO offers (
         name, description, offer_type, discount_type, discount_value, max_discount_amount,
+        min_booking_amount, code, image_url, storage_path, display_order,
+        cta_label, cta_destination, metadata,
         valid_from, valid_until, is_active, created_by
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
       RETURNING id, name, description, offer_type, discount_type, discount_value,
-                max_discount_amount AS max_discount, max_discount_amount, valid_from, valid_until,
+                max_discount_amount AS max_discount, max_discount_amount,
+                min_booking_amount, code, image_url, storage_path, display_order,
+                cta_label, cta_destination, metadata,
+                valid_from, valid_until,
                 is_active AS active, is_active, created_by, created_at, updated_at;
     `;
     const rawDiscountType = data.discount_type || data.discountType || 'percentage';
@@ -143,6 +154,18 @@ class AdminOfferRepository extends BaseRepository {
       ? data.max_discount
       : (data.max_discount_amount !== undefined ? data.max_discount_amount : (data.maxDiscount !== undefined ? data.maxDiscount : null));
 
+    const minBookingAmount = data.min_booking_amount !== undefined
+      ? data.min_booking_amount
+      : (data.minBookingAmount !== undefined ? data.minBookingAmount : null);
+
+    const code = data.code ? data.code.trim().toUpperCase() : null;
+    const imageUrl = data.image_url || data.imageUrl || null;
+    const storagePath = data.storage_path || data.storagePath || null;
+    const displayOrder = Number(data.display_order !== undefined ? data.display_order : data.displayOrder) || 0;
+    const ctaLabel = data.cta_label || data.ctaLabel || null;
+    const ctaDestination = data.cta_destination || data.ctaDestination || null;
+    const metadata = typeof data.metadata === 'object' && data.metadata !== null ? data.metadata : {};
+
     const params = [
       data.name.trim(),
       data.description || null,
@@ -150,6 +173,14 @@ class AdminOfferRepository extends BaseRepository {
       discountType,
       data.discount_value !== undefined ? Number(data.discount_value) : (data.discountValue !== undefined ? Number(data.discountValue) : null),
       maxDiscount !== null && maxDiscount !== undefined && maxDiscount !== '' ? Number(maxDiscount) : null,
+      minBookingAmount !== null && minBookingAmount !== undefined && minBookingAmount !== '' ? Number(minBookingAmount) : null,
+      code,
+      imageUrl,
+      storagePath,
+      displayOrder,
+      ctaLabel ? ctaLabel.trim() : null,
+      ctaDestination ? ctaDestination.trim() : null,
+      JSON.stringify(metadata),
       validFrom,
       validUntil,
       data.active !== undefined ? Boolean(data.active) : (data.is_active !== undefined ? Boolean(data.is_active) : true),
@@ -177,6 +208,20 @@ class AdminOfferRepository extends BaseRepository {
       max_discount: 'max_discount_amount',
       maxDiscount: 'max_discount_amount',
       max_discount_amount: 'max_discount_amount',
+      min_booking_amount: 'min_booking_amount',
+      minBookingAmount: 'min_booking_amount',
+      code: 'code',
+      image_url: 'image_url',
+      imageUrl: 'image_url',
+      storage_path: 'storage_path',
+      storagePath: 'storage_path',
+      display_order: 'display_order',
+      displayOrder: 'display_order',
+      cta_label: 'cta_label',
+      ctaLabel: 'cta_label',
+      cta_destination: 'cta_destination',
+      ctaDestination: 'cta_destination',
+      metadata: 'metadata',
       valid_from: 'valid_from',
       validFrom: 'valid_from',
       valid_until: 'valid_until',
@@ -190,7 +235,17 @@ class AdminOfferRepository extends BaseRepository {
     for (const [key, dbCol] of Object.entries(colMapping)) {
       if (updates[key] !== undefined && !handledDbCols.has(dbCol)) {
         fields.push(`${dbCol} = $${pIdx}`);
-        params.push(updates[key]);
+        let val = updates[key];
+        if (dbCol === 'code' && typeof val === 'string') {
+          val = val.trim().toUpperCase() || null;
+        } else if (dbCol === 'metadata' && typeof val === 'object' && val !== null) {
+          val = JSON.stringify(val);
+        } else if (['max_discount_amount', 'min_booking_amount', 'discount_value'].includes(dbCol) && val !== null && val !== '') {
+          val = Number(val);
+        } else if (dbCol === 'display_order') {
+          val = Number(val) || 0;
+        }
+        params.push(val);
         handledDbCols.add(dbCol);
         pIdx++;
       }
@@ -208,7 +263,10 @@ class AdminOfferRepository extends BaseRepository {
       SET ${fields.join(', ')}
       WHERE id = $${pIdx}
       RETURNING id, name, description, offer_type, discount_type, discount_value,
-                max_discount_amount AS max_discount, max_discount_amount, valid_from, valid_until,
+                max_discount_amount AS max_discount, max_discount_amount,
+                min_booking_amount, code, image_url, storage_path, display_order,
+                cta_label, cta_destination, metadata,
+                valid_from, valid_until,
                 is_active AS active, is_active, created_by, created_at, updated_at;
     `;
 
@@ -218,9 +276,44 @@ class AdminOfferRepository extends BaseRepository {
 
   async deleteOffer(id, client = null) {
     const executor = this._getExecutor(client);
-    const sql = `DELETE FROM offers WHERE id = $1 RETURNING id;`;
+    const sql = `DELETE FROM offers WHERE id = $1 RETURNING id, storage_path;`;
     const res = await executor(sql, [id]);
     return res.rows[0] || null;
+  }
+
+  async reorderOffers(orderedIds = [], client = null) {
+    const executor = this._getExecutor(client);
+    const results = [];
+
+    for (let index = 0; index < orderedIds.length; index++) {
+      const validId = toSafeUuid(orderedIds[index]);
+      if (validId) {
+        const sql = `
+          UPDATE offers
+          SET display_order = $1, updated_at = CURRENT_TIMESTAMP
+          WHERE id = $2
+          RETURNING id, display_order;
+        `;
+        const res = await executor(sql, [index, validId]);
+        if (res.rows[0]) results.push(res.rows[0]);
+      }
+    }
+
+    return results;
+  }
+
+  async isStoragePathInUse(storagePath, excludeOfferId = null, client = null) {
+    if (!storagePath) return false;
+    const executor = this._getExecutor(client);
+    const params = [storagePath];
+    let excludeSql = '';
+    if (excludeOfferId) {
+      excludeSql = ' AND id != $2';
+      params.push(excludeOfferId);
+    }
+    const sql = `SELECT COUNT(*)::int AS count FROM offers WHERE storage_path = $1${excludeSql};`;
+    const res = await executor(sql, params);
+    return (res.rows[0] ? Number(res.rows[0].count) : 0) > 0;
   }
 
   async addVehicleToOffer(offerId, vehicleId, client = null) {

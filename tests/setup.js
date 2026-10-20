@@ -6,6 +6,7 @@
  * load cleanly during automated testing without real network or DB credentials.
  */
 module.exports = async function globalSetup() {
+  require('dotenv').config();
   process.env.NODE_ENV = 'test';
   process.env.PORT = '8080';
   process.env.API_VERSION = 'v1';
@@ -18,8 +19,8 @@ module.exports = async function globalSetup() {
   process.env.CORS_ORIGINS = 'http://localhost:3000,http://localhost:3001,http://localhost:3002';
 
   // Database & Cache
-  process.env.DATABASE_URL = 'postgresql://test:test@localhost:5432/gongo_test';
-  process.env.REDIS_URL = 'redis://localhost:6379';
+  process.env.DATABASE_URL = process.env.DATABASE_URL || 'postgresql://test:test@localhost:5432/gongo_test';
+  process.env.REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
   process.env.USE_REDIS_MOCK = 'true';
 
   // Supabase

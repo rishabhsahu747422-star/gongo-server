@@ -17,6 +17,12 @@ router.use(auditMiddleware);
 // GET /api/v1/admin/offers
 router.get('/', (req, res, next) => adminOfferController.listOffers(req, res, next));
 
+// POST /api/v1/admin/offers/upload (Must precede /:id)
+router.post('/upload', sensitiveOpLimiter, (req, res, next) => adminOfferController.uploadAsset(req, res, next));
+
+// PUT /api/v1/admin/offers/reorder (Must precede /:id)
+router.put('/reorder', sensitiveOpLimiter, (req, res, next) => adminOfferController.reorderOffers(req, res, next));
+
 // POST /api/v1/admin/offers
 router.post('/', sensitiveOpLimiter, (req, res, next) => adminOfferController.createOffer(req, res, next));
 
@@ -25,6 +31,9 @@ router.get('/:id', (req, res, next) => adminOfferController.getOfferDetail(req, 
 
 // PATCH /api/v1/admin/offers/:id
 router.patch('/:id', sensitiveOpLimiter, (req, res, next) => adminOfferController.updateOffer(req, res, next));
+
+// PATCH /api/v1/admin/offers/:id/status
+router.patch('/:id/status', sensitiveOpLimiter, (req, res, next) => adminOfferController.updateStatus(req, res, next));
 
 // DELETE /api/v1/admin/offers/:id
 router.delete('/:id', sensitiveOpLimiter, (req, res, next) => adminOfferController.deleteOffer(req, res, next));

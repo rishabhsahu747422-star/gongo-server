@@ -52,7 +52,7 @@ describe('Database Migrations & Schema Integrity Test Suite', () => {
   // ── 1. Migration System & Ordering ─────────────────────────────
   describe('1. Migration Structure & Order', () => {
     it('discovers all migration files in correct alphabetical dependency order', () => {
-      expect(allMigrations.length).toBe(50);
+      expect(allMigrations.length).toBe(51);
 
       // Verify alphabetical ordering
       const sortedNames = [...allMigrations.map((m) => m.name)].sort();

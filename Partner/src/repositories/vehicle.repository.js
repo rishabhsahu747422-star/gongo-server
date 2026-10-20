@@ -30,6 +30,7 @@ class VehicleRepository extends BaseRepository {
         -- the repo migrations, so it is read schema-tolerantly (NULL when the column is absent).
         (to_jsonb(v) ->> 'is_active')::boolean AS is_active,
         vp.price_per_hour, vp.price_3_hours, vp.price_6_hours, vp.price_12_hours, vp.price_per_4_hours, vp.price_per_day,
+        vp.km_limit_per_day, vp.km_limit_per_hour, vp.km_limit_3_hours, vp.km_limit_6_hours, vp.km_limit_12_hours,
         vp.security_deposit, vp.extra_km_charge, vp.currency, vp.is_active AS pricing_active,
         COALESCE((
           SELECT SUM(COALESCE(e.partner_net_amount, bps.total_customer_amount, b.total_amount, b.subtotal, 0))
@@ -272,6 +273,7 @@ class VehicleRepository extends BaseRepository {
         v.verification_status, v.rejection_reason, v.is_archived, v.offline_reason, v.primary_image_url,
         v.created_at, v.updated_at,
         vp.price_per_hour, vp.price_3_hours, vp.price_6_hours, vp.price_12_hours, vp.price_per_4_hours, vp.price_per_day,
+        vp.km_limit_per_day, vp.km_limit_per_hour, vp.km_limit_3_hours, vp.km_limit_6_hours, vp.km_limit_12_hours,
         vp.security_deposit, vp.extra_km_charge, vp.currency, vp.is_active AS pricing_active,
         COALESCE(v.primary_image_url, vi_cover.storage_key) AS cover_image_key,
         COALESCE((

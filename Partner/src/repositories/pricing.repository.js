@@ -19,6 +19,7 @@ class PricingRepository extends BaseRepository {
       SELECT 
         id, vehicle_id, price_per_hour, price_3_hours, price_6_hours, price_12_hours,
         price_per_4_hours, price_per_day,
+        km_limit_per_day, km_limit_per_hour, km_limit_3_hours, km_limit_6_hours, km_limit_12_hours,
         security_deposit, extra_km_charge, currency, is_active,
         created_at, updated_at
       FROM ${this.tableName}
@@ -43,9 +44,11 @@ class PricingRepository extends BaseRepository {
     const text = `
       INSERT INTO ${this.tableName} (
         vehicle_id, pricing_type, price, price_per_hour, price_3_hours, price_6_hours, price_12_hours,
-        price_per_4_hours, price_per_day, security_deposit, extra_km_charge, currency, is_active
+        price_per_4_hours, price_per_day,
+        km_limit_per_day, km_limit_per_hour, km_limit_3_hours, km_limit_6_hours, km_limit_12_hours,
+        security_deposit, extra_km_charge, currency, is_active
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
       ON CONFLICT (vehicle_id) DO UPDATE SET
         pricing_type = EXCLUDED.pricing_type,
         price = EXCLUDED.price,
@@ -55,6 +58,11 @@ class PricingRepository extends BaseRepository {
         price_12_hours = EXCLUDED.price_12_hours,
         price_per_4_hours = EXCLUDED.price_per_4_hours,
         price_per_day = EXCLUDED.price_per_day,
+        km_limit_per_day = EXCLUDED.km_limit_per_day,
+        km_limit_per_hour = EXCLUDED.km_limit_per_hour,
+        km_limit_3_hours = EXCLUDED.km_limit_3_hours,
+        km_limit_6_hours = EXCLUDED.km_limit_6_hours,
+        km_limit_12_hours = EXCLUDED.km_limit_12_hours,
         security_deposit = EXCLUDED.security_deposit,
         extra_km_charge = EXCLUDED.extra_km_charge,
         currency = EXCLUDED.currency,
@@ -72,6 +80,11 @@ class PricingRepository extends BaseRepository {
       pricingData.price12Hours !== undefined ? pricingData.price12Hours : null,
       pricingData.pricePer4Hours ?? 0.00,
       pricingData.pricePerDay ?? 0.00,
+      pricingData.kmLimitPerDay !== undefined ? pricingData.kmLimitPerDay : null,
+      pricingData.kmLimitPerHour !== undefined ? pricingData.kmLimitPerHour : null,
+      pricingData.kmLimit3Hours !== undefined ? pricingData.kmLimit3Hours : null,
+      pricingData.kmLimit6Hours !== undefined ? pricingData.kmLimit6Hours : null,
+      pricingData.kmLimit12Hours !== undefined ? pricingData.kmLimit12Hours : null,
       pricingData.securityDeposit ?? 0.00,
       pricingData.extraKmCharge ?? 0.00,
       pricingData.currency || 'INR',
@@ -121,10 +134,11 @@ class PricingRepository extends BaseRepository {
       INSERT INTO vehicle_pricing_history (
         vehicle_id, price_per_hour, price_3_hours, price_6_hours, price_12_hours,
         price_per_4_hours, price_per_day,
+        km_limit_per_day, km_limit_per_hour, km_limit_3_hours, km_limit_6_hours, km_limit_12_hours,
         security_deposit, extra_km_charge, valid_from, valid_to, effective_from, effective_to,
         changed_by
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $10, $11, $12)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $15, $16, $17)
       RETURNING *;
     `;
     const values = [
@@ -135,6 +149,11 @@ class PricingRepository extends BaseRepository {
       historyData.price12Hours !== undefined ? historyData.price12Hours : null,
       historyData.pricePer4Hours,
       historyData.pricePerDay,
+      historyData.kmLimitPerDay !== undefined ? historyData.kmLimitPerDay : null,
+      historyData.kmLimitPerHour !== undefined ? historyData.kmLimitPerHour : null,
+      historyData.kmLimit3Hours !== undefined ? historyData.kmLimit3Hours : null,
+      historyData.kmLimit6Hours !== undefined ? historyData.kmLimit6Hours : null,
+      historyData.kmLimit12Hours !== undefined ? historyData.kmLimit12Hours : null,
       historyData.securityDeposit,
       historyData.extraKmCharge,
       historyData.validFrom || new Date().toISOString(),
@@ -168,6 +187,7 @@ class PricingRepository extends BaseRepository {
       SELECT 
         id, vehicle_id, price_per_hour, price_3_hours, price_6_hours, price_12_hours,
         price_per_4_hours, price_per_day,
+        km_limit_per_day, km_limit_per_hour, km_limit_3_hours, km_limit_6_hours, km_limit_12_hours,
         security_deposit, extra_km_charge, valid_from, valid_to, changed_by, created_at
       FROM vehicle_pricing_history
       WHERE vehicle_id = $1

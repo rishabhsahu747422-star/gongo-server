@@ -25,6 +25,7 @@ const bookingsMigration = require('../../database/migrations/1727000000000_creat
 const idempotencyMigration = require('../../database/migrations/1727100000000_create-idempotency-keys-table');
 const couponsMigration = require('../../database/migrations/1727200000000_create-coupons-table');
 const addCouponColumnsMigration = require('../../database/migrations/1727300000000_add-coupon-columns-to-bookings');
+const paymentsMigration = require('../../database/migrations/1727400000000_create-payments-table');
 
 describe('Customer Bookings Integration Tests — Phase 8', () => {
   let app;
@@ -105,6 +106,7 @@ describe('Customer Bookings Integration Tests — Phase 8', () => {
     await idempotencyMigration.up(pgm);
     await couponsMigration.up(pgm);
     await addCouponColumnsMigration.up(pgm);
+    await paymentsMigration.up(pgm);
 
     // Mock Firebase auth
     const mockFirebaseAuth = {
@@ -597,6 +599,149 @@ describe('Customer Bookings Integration Tests — Phase 8', () => {
 
       expect(res.status).toBe(400);
       expect(res.body.code).toBe('BOOKING_NOT_CANCELLABLE');
+    });
+  });
+
+  // ── Decline Payment (Flow A) ────────────────────────────────────────────────
+  describe('POST /api/v1/bookings/:bookingId/decline-payment', () => {
+    it('37. Customer can decline payment on own booking and release vehicle hold', async () => {
+      // Create a booking
+      const createRes = await request(app)
+        .post('/api/v1/bookings')
+        .set('Authorization', 'Bearer token-alice')
+        .send({
+          vehicleId: activeVehicleId,
+          rentalType: 'HOURLY',
+          startAt: relDate('2026-11-28T10:00:00Z'),
+          endAt: relDate('2026-11-28T12:00:00Z'),
+        });
+      const toDeclineId = createRes.body.data.booking.id;
+
+      const res = await request(app)
+        .post(`/api/v1/bookings/${toDeclineId}/decline-payment`)
+        .set('Authorization', 'Bearer token-alice');
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.booking.status).toBe('cancelled');
+      expect(res.body.data.booking.cancellationReason).toBe('PAYMENT_DECLINED');
+
+      // Verify availability is freed immediately
+      const availRes = await request(app)
+        .get('/api/v1/bookings/availability')
+        .set('Authorization', 'Bearer token-bob')
+        .query({
+          vehicleId: activeVehicleId,
+          startAt: relDate('2026-11-28T10:00:00Z'),
+          endAt: relDate('2026-11-28T12:00:00Z'),
+        });
+      expect(availRes.body.data.isAvailable).toBe(true);
+
+      // Verify idempotency on repeated decline
+      const retryRes = await request(app)
+        .post(`/api/v1/bookings/${toDeclineId}/decline-payment`)
+        .set('Authorization', 'Bearer token-alice');
+      expect(retryRes.status).toBe(200);
+      expect(retryRes.body.data.booking.status).toBe('cancelled');
+    });
+
+    it('38. Customer cannot decline payment on another customer booking (tenant isolation)', async () => {
+      const res = await request(app)
+        .post(`/api/v1/bookings/${existingBookingIdB}/decline-payment`)
+        .set('Authorization', 'Bearer token-alice');
+
+      expect(res.status).toBe(404);
+      expect(res.body.code).toBe('BOOKING_NOT_FOUND');
+    });
+
+    it('39. Customer cannot decline payment on a completed booking', async () => {
+      const res = await request(app)
+        .post(`/api/v1/bookings/${existingBookingIdB}/decline-payment`)
+        .set('Authorization', 'Bearer token-bob');
+
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe('BOOKING_NOT_CANCELLABLE');
+    });
+
+    it('40. Unauthenticated customer rejected with 401', async () => {
+      const res = await request(app)
+        .post(`/api/v1/bookings/${existingBookingIdB}/decline-payment`);
+
+      expect(res.status).toBe(401);
+    });
+
+    it('41. Invalid booking ID rejected with 400 VALIDATION_ERROR', async () => {
+      const res = await request(app)
+        .post('/api/v1/bookings/invalid-booking-id-123/decline-payment')
+        .set('Authorization', 'Bearer token-alice');
+
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe('VALIDATION_ERROR');
+    });
+
+    it('42. Customer cannot decline payment if payment already succeeded in payments table', async () => {
+      const createRes = await request(app)
+        .post('/api/v1/bookings')
+        .set('Authorization', 'Bearer token-alice')
+        .send({
+          vehicleId: activeVehicleId,
+          rentalType: 'HOURLY',
+          startAt: relDate('2026-12-15T10:00:00Z'),
+          endAt: relDate('2026-12-15T12:00:00Z'),
+        });
+      const bId = createRes.body.data.booking.id;
+
+      await mockPool.query(
+        `INSERT INTO payments (id, booking_id, customer_id, amount, currency, status, payment_type, provider_order_id)
+         VALUES ($1, $2, $3, 200, 'INR', 'SUCCESS', 'BOOKING_ADVANCE', $4)`,
+        [crypto.randomUUID(), bId, customerA.id, 'cf_order_test_42'],
+      );
+
+      const res = await request(app)
+        .post(`/api/v1/bookings/${bId}/decline-payment`)
+        .set('Authorization', 'Bearer token-alice');
+
+      expect(res.status).toBe(409);
+      expect(res.body.code).toBe('PAYMENT_ALREADY_SUCCEEDED');
+    });
+
+    it('43. Customer cannot decline payment if Cashfree provider reports orderStatus PAID', async () => {
+      const createRes = await request(app)
+        .post('/api/v1/bookings')
+        .set('Authorization', 'Bearer token-alice')
+        .send({
+          vehicleId: activeVehicleId,
+          rentalType: 'HOURLY',
+          startAt: relDate('2026-12-16T10:00:00Z'),
+          endAt: relDate('2026-12-16T12:00:00Z'),
+        });
+      const bId = createRes.body.data.booking.id;
+
+      const providerOrderId = 'cf_order_test_paid_123';
+      await mockPool.query(
+        `INSERT INTO payments (id, booking_id, customer_id, amount, currency, status, payment_type, provider_order_id)
+         VALUES ($1, $2, $3, 200, 'INR', 'PENDING', 'BOOKING_ADVANCE', $4)`,
+        [crypto.randomUUID(), bId, customerA.id, providerOrderId],
+      );
+
+      const cancellationService = require('../../src/services/cancellation.service');
+      const originalProvider = cancellationService.provider;
+      cancellationService.provider = {
+        getOrderStatus: jest.fn().mockResolvedValue({
+          orderStatus: 'PAID',
+          orderAmount: 200,
+        }),
+      };
+
+      try {
+        const res = await request(app)
+          .post(`/api/v1/bookings/${bId}/decline-payment`)
+          .set('Authorization', 'Bearer token-alice');
+
+        expect(res.status).toBe(409);
+        expect(res.body.code).toBe('PAYMENT_ALREADY_SUCCEEDED');
+      } finally {
+        cancellationService.provider = originalProvider;
+      }
     });
   });
 

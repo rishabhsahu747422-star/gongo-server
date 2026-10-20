@@ -163,5 +163,54 @@ describe('Payment Provider Unit Tests — Phase 10', () => {
         expect(cashfreeProvider.verifyWebhookSignature({ 'x-webhook-signature': 'abc' }, '{}')).toBe(false);
       });
     });
+
+    describe('getOrderStatus 404 handling', () => {
+      const originalFetch = global.fetch;
+
+      afterEach(() => {
+        global.fetch = originalFetch;
+      });
+
+      it('10. returns NOT_FOUND object without throwing when Cashfree returns HTTP 404', async () => {
+        global.fetch = jest.fn().mockResolvedValue({
+          ok: false,
+          status: 404,
+          json: jest.fn().mockResolvedValue({
+            message: 'Order Reference Id does not exist',
+            code: 'order_not_found',
+            type: 'invalid_request_error',
+          }),
+        });
+
+        const result = await cashfreeProvider.getOrderStatus('cf_55b4eedf13df435b_6980cbc6', {
+          bookingId: 'bk-123',
+          paymentId: 'pay-456',
+        });
+
+        expect(result).toEqual({
+          providerOrderId: 'cf_55b4eedf13df435b_6980cbc6',
+          orderStatus: 'NOT_FOUND',
+          notFound: true,
+          httpStatus: 404,
+          orderAmount: null,
+          orderCurrency: 'INR',
+        });
+      });
+
+      it('11. suppresses duplicate 404 log spam for the same provider order reference', async () => {
+        global.fetch = jest.fn().mockResolvedValue({
+          ok: false,
+          status: 404,
+          json: jest.fn().mockResolvedValue({ message: 'Order Reference Id does not exist' }),
+        });
+
+        const orderId = 'cf_repeat_404_test';
+        await cashfreeProvider.getOrderStatus(orderId);
+        await cashfreeProvider.getOrderStatus(orderId);
+
+        // Second call should return cleanly without throwing and maintain cached entry
+        expect(cashfreeProvider._recent404Orders.has(orderId)).toBe(true);
+      });
+    });
   });
 });

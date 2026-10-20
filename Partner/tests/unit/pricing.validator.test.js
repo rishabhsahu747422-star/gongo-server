@@ -24,6 +24,11 @@ describe('Unit: PricingValidator', () => {
       price12Hours: null,
       pricePer4Hours: 500,
       pricePerDay: 2200,
+      kmLimitPerDay: null,
+      kmLimitPerHour: null,
+      kmLimit3Hours: null,
+      kmLimit6Hours: null,
+      kmLimit12Hours: null,
       securityDeposit: 4000,
       extraKmCharge: 14,
       currency: 'INR',
@@ -149,6 +154,45 @@ describe('Unit: PricingValidator', () => {
       pricingValidator.validatePricing({
         ...validFullPricing,
         discountRate: 50,
+      });
+    }).toThrow(ValidationError);
+  });
+
+  it('accepts and normalizes explicit KM limits across all 5 durations', () => {
+    const payload = {
+      pricePerDay: 2000,
+      kmLimitPerDay: 200,
+      pricePerHour: 150,
+      kmLimitPerHour: 20,
+      price3Hours: 400,
+      kmLimit3Hours: 50,
+      price6Hours: 750,
+      kmLimit6Hours: 80,
+      price12Hours: 1300,
+      kmLimit12Hours: 120,
+      securityDeposit: 3000,
+      extraKmCharge: 12,
+    };
+    const validated = pricingValidator.validatePricing(payload);
+    expect(validated.pricePerDay).toBe(2000);
+    expect(validated.kmLimitPerDay).toBe(200);
+    expect(validated.pricePerHour).toBe(150);
+    expect(validated.kmLimitPerHour).toBe(20);
+    expect(validated.price3Hours).toBe(400);
+    expect(validated.kmLimit3Hours).toBe(50);
+    expect(validated.price6Hours).toBe(750);
+    expect(validated.kmLimit6Hours).toBe(80);
+    expect(validated.price12Hours).toBe(1300);
+    expect(validated.kmLimit12Hours).toBe(120);
+    expect(validated.securityDeposit).toBe(3000);
+    expect(validated.extraKmCharge).toBe(12);
+  });
+
+  it('rejects negative KM limits', () => {
+    expect(() => {
+      pricingValidator.validatePricing({
+        pricePerDay: 2000,
+        kmLimitPerDay: -10,
       });
     }).toThrow(ValidationError);
   });

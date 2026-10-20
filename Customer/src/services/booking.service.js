@@ -263,8 +263,8 @@ class BookingService {
         const gst = feeCharges.gst;
         const taxAmount = feeCharges.gst;
         const platformFee = feeCharges.platformFee;
-        const totalAmount = Math.round((subtotal + securityDeposit) * 100) / 100;
         const payableAmount = Math.round((subtotal + feeCharges.totalFeesAndTax) * 100) / 100;
+        const totalAmount = Math.round((subtotal + securityDeposit) * 100) / 100;
 
         const bookingStatusToSet = isDevPayment ? 'CONFIRMED' : 'PENDING';
         const paymentStatusToSet = isDevPayment ? 'PAID' : 'PENDING';

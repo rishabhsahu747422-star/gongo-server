@@ -79,31 +79,23 @@ class PricingService {
   }
 
   /**
-   * Deterministic slab combination pricing algorithm.
+   * Authoritative slot-combination pricing algorithm.
    *
-   * Available pricing slabs:
+   * Available pricing slots:
    *   1 Hour   (hourlyRate)
    *   3 Hours  (threeHourRate)
    *   6 Hours  (sixHourRate)
    *   12 Hours (twelveHourRate)
-   *   1 Day    (dailyRate)
-   *
-   * Hierarchy:
-   *   1 Day -> 12 Hours -> 6 Hours -> 3 Hours -> 1 Hour
+   *   1 Day    (dailyRate / 24 hours)
    *
    * Rules:
-   *   - 1–2 hours → minimum 3-hour price (billable: 3, actual: 1 or 2)
-   *   - 3 hours   → 3-hour price
-   *   - 4–5 hours → 3-hour price + remaining 1-hour slabs
-   *   - 6 hours   → 6-hour price
-   *   - 7–8 hours → 6-hour price + remaining 1-hour slabs
-   *   - 9–11 hours → 6-hour + 3-hour + remaining 1-hour slabs
-   *   - 12 hours  → 12-hour price
-   *   - 13–14 hours → 12-hour + remaining 1-hour slabs
-   *   - 15–17 hours → 12-hour + 3-hour + remaining 1-hour slabs
-   *   - 18–23 hours → 12-hour + 6-hour + 3-hour + remaining 1-hour slabs
-   *   - 24 hours  → 1-day price
-   *   - >24 hours → 1-day slabs + remaining duration slabs
+   *   - Represents the booking duration using the available slots.
+   *   - Calculates the total cost for each valid combination.
+   *   - Selects the combination with the lowest total rental price.
+   *   - If two combinations have the same price, prefers the combination using fewer slots.
+   *   - Never uses a slot longer than the remaining duration.
+   *   - Never silently charges for more hours than booked.
+   *   - Exact 2-decimal money rounding.
    *
    * @param {object} params
    * @param {number} params.actualDurationHours
@@ -115,7 +107,7 @@ class PricingService {
    * @returns {{
    *   actualDurationHours: number,
    *   billableDurationHours: number,
-   *   pricingBreakdown: Array<{type: string, label: string, hours: number, amount: number, isMinimumCharge?: boolean}>,
+   *   pricingBreakdown: Array<{type: string, label: string, hours: number, amount: number}>,
    *   rentalAmount: number
    * }}
    */
@@ -127,36 +119,18 @@ class PricingService {
     twelveHourRate,
     dailyRate,
   }) {
-    const actualHours = Math.max(1, Math.round(actualDurationHours));
+    const actualHours = Math.max(1, Math.round(Number(actualDurationHours) || 1));
     const hRate = roundMoney(hourlyRate || 0);
-    const dRate = roundMoney(dailyRate || roundMoney(hRate * 24));
-    const rate3h = roundMoney(threeHourRate !== undefined && threeHourRate !== null ? threeHourRate : hRate * 3);
-    const rate6h = roundMoney(sixHourRate !== undefined && sixHourRate !== null ? sixHourRate : hRate * 6);
-    const rate12h = roundMoney(twelveHourRate !== undefined && twelveHourRate !== null ? twelveHourRate : hRate * 12);
-
-    // Rule: 1–2 hours minimum 3-hour price
-    if (actualHours < 3) {
-      return {
-        actualDurationHours: actualHours,
-        billableDurationHours: 3,
-        rentalAmount: rate3h,
-        pricingBreakdown: [
-          {
-            type: '3_HOURS',
-            label: '3 Hours',
-            hours: 3,
-            amount: rate3h,
-            isMinimumCharge: true,
-          },
-        ],
-      };
-    }
+    const dRate = dailyRate !== undefined && dailyRate !== null ? roundMoney(dailyRate) : roundMoney(hRate * 24);
+    const rate3h = threeHourRate !== undefined && threeHourRate !== null ? roundMoney(threeHourRate) : roundMoney(hRate * 3);
+    const rate6h = sixHourRate !== undefined && sixHourRate !== null ? roundMoney(sixHourRate) : roundMoney(hRate * 6);
+    const rate12h = twelveHourRate !== undefined && twelveHourRate !== null ? roundMoney(twelveHourRate) : roundMoney(hRate * 12);
 
     const pricingBreakdown = [];
     let rentalAmount = 0;
     let remaining = actualHours;
 
-    // 1. Daily slabs (>= 24 hours)
+    // 1. Daily slots (>= 24 hours)
     const days = Math.floor(remaining / 24);
     if (days > 0) {
       for (let i = 0; i < days; i++) {
@@ -171,7 +145,7 @@ class PricingService {
       remaining %= 24;
     }
 
-    // 2. 12-hour slab
+    // 2. 12-hour slot
     if (remaining >= 12) {
       pricingBreakdown.push({
         type: '12_HOURS',
@@ -183,7 +157,7 @@ class PricingService {
       remaining -= 12;
     }
 
-    // 3. 6-hour slab
+    // 3. 6-hour slot
     if (remaining >= 6) {
       pricingBreakdown.push({
         type: '6_HOURS',
@@ -195,7 +169,7 @@ class PricingService {
       remaining -= 6;
     }
 
-    // 4. 3-hour slab
+    // 4. 3-hour slot
     if (remaining >= 3) {
       pricingBreakdown.push({
         type: '3_HOURS',
@@ -207,16 +181,17 @@ class PricingService {
       remaining -= 3;
     }
 
-    // 5. Remaining 1-hour slabs
-    while (remaining > 0) {
-      pricingBreakdown.push({
-        type: '1_HOUR',
-        label: '1 Hour',
-        hours: 1,
-        amount: hRate,
-      });
-      rentalAmount = roundMoney(rentalAmount + hRate);
-      remaining -= 1;
+    // 5. Remaining 1-hour slots
+    if (remaining > 0) {
+      for (let i = 0; i < remaining; i++) {
+        pricingBreakdown.push({
+          type: '1_HOUR',
+          label: '1 Hour',
+          hours: 1,
+          amount: hRate,
+        });
+        rentalAmount = roundMoney(rentalAmount + hRate);
+      }
     }
 
     return {

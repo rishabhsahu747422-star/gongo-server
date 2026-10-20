@@ -115,6 +115,21 @@ class BookingController {
   }
 
   /**
+   * POST /api/v1/bookings/:bookingId/decline-payment
+   */
+  async declinePayment(req, res, next) {
+    try {
+      const result = await cancellationService.declinePayment(
+        req.user.id,
+        req.params.bookingId,
+      );
+      return sendSuccess(res, result, 'Payment declined and booking cancelled successfully', HTTP_STATUS.OK);
+    } catch (err) {
+      return next(err);
+    }
+  }
+
+  /**
    * POST /api/v1/bookings/:bookingId/rating
    */
   async submitRating(req, res, next) {

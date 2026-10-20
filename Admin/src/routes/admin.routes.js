@@ -204,6 +204,11 @@ const adminOfferRoutes = require('./admin-offer.routes');
 
 router.use('/offers', adminOfferRoutes);
 
+// ── Home Banner Management ──────────────────────────────────────────────────
+const adminBannerRoutes = require('./admin-banner.routes');
+
+router.use('/banners', adminBannerRoutes);
+
 // ── Rental Agreements (Section 24) ───────────────────────────────────────────
 const adminAgreementRoutes = require('./admin-agreement.routes');
 

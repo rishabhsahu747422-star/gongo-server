@@ -17,6 +17,7 @@ const VALID_PRODUCTION_ENV = {
   CORS_ORIGIN: 'https://app.example.com',
   CASHFREE_APP_ID: 'real-app-id',
   CASHFREE_SECRET_KEY: 'real-secret',
+  CASHFREE_ENV: 'PRODUCTION',
   SUPABASE_URL: 'https://project.supabase.co',
   SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
 };
@@ -51,6 +52,7 @@ describe('Customer production configuration guards', () => {
     ['missing CASHFREE_SECRET_KEY', { unset: ['CASHFREE_SECRET_KEY'] }, /CASHFREE_SECRET_KEY/],
     ['placeholder CASHFREE_SECRET_KEY', { set: { CASHFREE_SECRET_KEY: 'test_cashfree_secret_key' } }, /CASHFREE_SECRET_KEY/],
     ['missing CASHFREE_APP_ID', { unset: ['CASHFREE_APP_ID'] }, /CASHFREE_APP_ID/],
+    ['CASHFREE_ENV=SANDBOX in production', { set: { CASHFREE_ENV: 'SANDBOX' } }, /CASHFREE_ENV/],
     ['CUSTOMER_DEV_AUTH_ENABLED=true', { set: { CUSTOMER_DEV_AUTH_ENABLED: 'true' } }, /CUSTOMER_DEV_AUTH_ENABLED/],
     ['DEV_DUMMY_PAYMENT_ENABLED=true', { set: { DEV_DUMMY_PAYMENT_ENABLED: 'true' } }, /DEV_DUMMY_PAYMENT_ENABLED/],
     ['USE_REDIS_MOCK=true', { set: { USE_REDIS_MOCK: 'true' } }, /USE_REDIS_MOCK/],

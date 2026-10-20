@@ -1,7 +1,19 @@
 'use strict';
 
 // Load environment variables FIRST before any other module
-require('dotenv').config();
+const path = require('path');
+const fs = require('fs');
+const dotenv = require('dotenv');
+
+dotenv.config();
+[
+  path.resolve(process.cwd(), '.env'),
+  path.resolve(__dirname, '../../../server/.env'),
+  path.resolve(__dirname, '../../server/.env'),
+  path.resolve(__dirname, '../../.env'),
+].forEach((p) => {
+  if (fs.existsSync(p)) dotenv.config({ path: p });
+});
 
 const { createApp } = require('./app');
 const {

@@ -45,4 +45,12 @@ const platformFeeRouter = require('./platform-fee');
 router.use('/customer/platform-fee', platformFeeRouter);
 router.use('/platform-fee', platformFeeRouter);
 
+// Home Banners (Dynamic Banner Management System)
+router.use('/banners', require('./banners'));
+router.use('/customer/banners', require('./banners'));
+
+// Offers (Dynamic Offers Management System)
+router.use('/offers', require('./offers'));
+router.use('/customer/offers', require('./offers'));
+
 module.exports = router;

@@ -380,7 +380,7 @@ class CustomerAuthService {
         refreshToken,
       };
     } finally {
-      await this.redisClient.del(lockKey).catch(() => {});
+      await this.redisClient.del(lockKey).catch(() => { });
     }
   }
 }

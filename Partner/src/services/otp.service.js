@@ -441,7 +441,7 @@ class OtpService {
         ...sessionData,
       };
     } finally {
-      await redisClient.del(lockKey).catch(() => {});
+      await redisClient.del(lockKey).catch(() => { });
     }
   }
 
@@ -617,7 +617,7 @@ class OtpService {
         ...sessionData,
       };
     } finally {
-      await redisClient.del(lockKey).catch(() => {});
+      await redisClient.del(lockKey).catch(() => { });
     }
   }
 }

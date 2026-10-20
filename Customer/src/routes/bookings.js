@@ -95,6 +95,17 @@ router.post(
 );
 
 /**
+ * @route   POST /api/v1/bookings/:bookingId/decline-payment
+ * @desc    Customer declines pending payment and cancels the booking
+ * @access  Customer
+ */
+router.post(
+  '/:bookingId/decline-payment',
+  validateBookingId,
+  (req, res, next) => bookingController.declinePayment(req, res, next),
+);
+
+/**
  * @route   POST /api/v1/bookings/:bookingId/payment
  * @desc    Initiate Cashfree payment order for booking
  * @access  Customer

@@ -40,7 +40,7 @@ router.get(
  * @access  Public (Cashfree Server)
  */
 router.post(
-  '/webhook/cashfree',
+  ['/webhook/cashfree', '/webhook'],
   validateWebhook,
   (req, res, next) => paymentController.handleCashfreeWebhook(req, res, next),
 );

@@ -34,6 +34,33 @@ class AdminOfferController {
     }
   }
 
+  async uploadAsset(req, res, next) {
+    try {
+      const auditCtx = this._buildAuditContext(req, res, 'offers.upload');
+      let buffer = null;
+      let filename = 'offer_asset';
+      let assetType = req.body?.assetType || req.body?.asset_type || 'IMAGE';
+
+      if (req.body?.fileBase64) {
+        buffer = Buffer.from(req.body.fileBase64, 'base64');
+        filename = req.body.filename || filename;
+      } else if (req.body?.buffer) {
+        buffer = Buffer.isBuffer(req.body.buffer) ? req.body.buffer : Buffer.from(req.body.buffer);
+        filename = req.body.filename || filename;
+      } else if (Buffer.isBuffer(req.body)) {
+        buffer = req.body;
+      }
+
+      const data = await adminOfferService.uploadAsset(
+        { buffer, filename, assetType },
+        auditCtx,
+      );
+      return sendSuccess(res, data, null, 201);
+    } catch (err) {
+      return next(err);
+    }
+  }
+
   async createOffer(req, res, next) {
     try {
       const auditCtx = this._buildAuditContext(req, res, 'offers.create');
@@ -48,6 +75,28 @@ class AdminOfferController {
     try {
       const auditCtx = this._buildAuditContext(req, res, 'offers.update');
       const data = await adminOfferService.updateOffer(req.params.id, req.body, auditCtx);
+      return sendSuccess(res, data);
+    } catch (err) {
+      return next(err);
+    }
+  }
+
+  async updateStatus(req, res, next) {
+    try {
+      const auditCtx = this._buildAuditContext(req, res, 'offers.status');
+      const isActive = req.body.isActive !== undefined ? req.body.isActive : req.body.is_active;
+      const data = await adminOfferService.updateStatus(req.params.id, isActive, auditCtx);
+      return sendSuccess(res, data);
+    } catch (err) {
+      return next(err);
+    }
+  }
+
+  async reorderOffers(req, res, next) {
+    try {
+      const auditCtx = this._buildAuditContext(req, res, 'offers.update');
+      const orderedIds = req.body.orderedIds || req.body.offerIds;
+      const data = await adminOfferService.reorderOffers(orderedIds, auditCtx);
       return sendSuccess(res, data);
     } catch (err) {
       return next(err);

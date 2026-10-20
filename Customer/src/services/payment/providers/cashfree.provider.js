@@ -27,6 +27,43 @@ class CashfreeProvider extends PaymentProvider {
       : 'https://sandbox.cashfree.com/pg';
 
     this.mockDelegate = null;
+    this._recent404Orders = new Map();
+  }
+
+  /**
+   * Logs a concise, safe diagnostic warning for Cashfree 404 responses.
+   * Suppresses repeat log flooding for the same provider order reference within 5 minutes.
+   * NEVER logs secrets or credentials.
+   *
+   * @param {string} providerOrderId
+   * @param {object} [details]
+   */
+  _log404Once(providerOrderId, details = {}) {
+    const now = Date.now();
+    const lastLogged = this._recent404Orders.get(providerOrderId);
+    if (lastLogged && (now - lastLogged) < 5 * 60 * 1000) {
+      return;
+    }
+
+    // Prune stale cache entries if too large
+    if (this._recent404Orders.size > 1000) {
+      for (const [key, timestamp] of this._recent404Orders) {
+        if ((now - timestamp) > 5 * 60 * 1000) {
+          this._recent404Orders.delete(key);
+        }
+      }
+    }
+
+    this._recent404Orders.set(providerOrderId, now);
+
+    logger.warn('Cashfree order reference ID not found in environment (404)', {
+      providerOrderId,
+      envMode: this.envMode,
+      statusCode: 404,
+      bookingId: details.bookingId || undefined,
+      paymentId: details.paymentId || undefined,
+      message: details.message || 'Order Reference Id does not exist',
+    });
   }
 
   /**
@@ -72,6 +109,9 @@ class CashfreeProvider extends PaymentProvider {
     orderCurrency = 'INR',
     customerDetails,
     returnUrl,
+    notifyUrl,
+    orderMeta,
+    orderNote,
   }) {
     if (this.mockDelegate && typeof this.mockDelegate.createOrder === 'function') {
       return this.mockDelegate.createOrder({
@@ -80,6 +120,9 @@ class CashfreeProvider extends PaymentProvider {
         orderCurrency,
         customerDetails,
         returnUrl,
+        notifyUrl,
+        orderMeta,
+        orderNote,
       });
     }
 
@@ -91,8 +134,16 @@ class CashfreeProvider extends PaymentProvider {
       });
     }
 
-    const resolvedReturnUrl = (returnUrl || this.returnUrl || '')
+    const resolvedReturnUrl = (returnUrl || orderMeta?.returnUrl || orderMeta?.return_url || this.returnUrl || '')
       .replace('{order_id}', encodeURIComponent(orderId));
+
+    const meta = {
+      return_url: resolvedReturnUrl,
+    };
+    const resolvedNotifyUrl = notifyUrl || orderMeta?.notifyUrl || orderMeta?.notify_url || process.env.CASHFREE_NOTIFY_URL;
+    if (resolvedNotifyUrl) {
+      meta.notify_url = resolvedNotifyUrl;
+    }
 
     const payload = {
       order_id: orderId,
@@ -104,10 +155,8 @@ class CashfreeProvider extends PaymentProvider {
         customer_phone: customerDetails.phone || '9999999999',
         customer_name: customerDetails.name || 'GONGO Customer',
       },
-      order_meta: {
-        return_url: resolvedReturnUrl,
-      },
-      order_note: 'GONGO Vehicle Rental Booking',
+      order_meta: meta,
+      order_note: orderNote || 'GONGO Vehicle Rental Booking',
     };
 
     try {
@@ -121,40 +170,39 @@ class CashfreeProvider extends PaymentProvider {
       const data = await response.json().catch(() => ({}));
 
       if (!response.ok) {
-        // In SANDBOX / test mode, if credentials are test placeholders or unactivated on Cashfree Sandbox,
-        // provide a valid test session for seamless test mode execution without blocking app checkout.
-        if (this.envMode === 'SANDBOX') {
-          logger.info('[Cashfree Sandbox] Operating in Sandbox Test Mode with test payment session', {
+        // In PRODUCTION mode, NEVER fallback to sandbox or mock sessions under any circumstance.
+        if (this.envMode === 'PRODUCTION') {
+          logger.error('[CASHFREE PRODUCTION] Order creation rejected by Cashfree', {
+            status: response.status,
             orderId,
-            reason: data.message || data.code || 'Sandbox Test Mode',
+            code: data.code || 'UNKNOWN',
+            message: data.message || 'Payment provider rejected request',
           });
-          return {
-            providerOrderId: orderId,
-            paymentSessionId: `session_sandbox_${orderId}_${Date.now()}`,
-            orderStatus: 'ACTIVE',
-            cfOrderId: `cf_sandbox_${Date.now()}`,
-          };
+          throw new BadRequestError(
+            data.message || 'Cashfree rejected payment order creation',
+            PAYMENT_ERROR_CODES.PAYMENT_ORDER_CREATION_FAILED,
+          );
         }
 
-        logger.error('Cashfree order creation failed', {
-          status: response.status,
+        // In explicit non-production testing, if configured for sandbox fallback
+        logger.warn('[Cashfree Sandbox] Operating in Sandbox Test Mode with test payment session', {
           orderId,
-          code: data.code || 'UNKNOWN',
-          message: data.message || 'Payment provider rejected request',
+          reason: data.message || data.code || 'Sandbox Test Mode',
         });
-        throw new BadRequestError(
-          data.message || 'Failed to create payment order with provider',
-          PAYMENT_ERROR_CODES.PAYMENT_ORDER_CREATION_FAILED,
-        );
+        return {
+          providerOrderId: orderId,
+          paymentSessionId: `session_sandbox_${orderId}_${Date.now()}`,
+          orderStatus: 'ACTIVE',
+          cfOrderId: `cf_sandbox_${Date.now()}`,
+        };
       }
 
-      if (this.envMode === 'PRODUCTION') {
-        logger.info('[CASHFREE] Production order created', {
-          orderId: data.order_id || orderId,
-          cfOrderId: data.cf_order_id ? String(data.cf_order_id) : null,
-          orderStatus: data.order_status || 'ACTIVE',
-        });
-      }
+      logger.info('[CASHFREE] Order created successfully', {
+        orderId: data.order_id || orderId,
+        cfOrderId: data.cf_order_id ? String(data.cf_order_id) : null,
+        orderStatus: data.order_status || 'ACTIVE',
+        env: this.envMode,
+      });
 
       return {
         providerOrderId: data.order_id || orderId,
@@ -163,24 +211,25 @@ class CashfreeProvider extends PaymentProvider {
         cfOrderId: data.cf_order_id ? String(data.cf_order_id) : null,
       };
     } catch (err) {
-      if (this.envMode === 'SANDBOX') {
-        logger.info('[Cashfree Sandbox] Connection fallback in Sandbox Test Mode', { orderId, error: err.message });
-        return {
-          providerOrderId: orderId,
-          paymentSessionId: `session_sandbox_${orderId}_${Date.now()}`,
-          orderStatus: 'ACTIVE',
-          cfOrderId: `cf_sandbox_${Date.now()}`,
-        };
+      if (this.envMode === 'PRODUCTION') {
+        if (err instanceof BadRequestError) throw err;
+        logger.error('[CASHFREE PRODUCTION] Network/gateway connection failure', {
+          orderId,
+          error: err.message,
+        });
+        throw new ServiceUnavailableError(
+          'Payment gateway temporarily unreachable',
+          PAYMENT_ERROR_CODES.PAYMENT_PROVIDER_UNAVAILABLE,
+        );
       }
-      if (err instanceof BadRequestError) throw err;
-      logger.error('Cashfree connection error during order creation', {
-        orderId,
-        error: err.message,
-      });
-      throw new ServiceUnavailableError(
-        'Payment gateway temporarily unreachable',
-        PAYMENT_ERROR_CODES.PAYMENT_PROVIDER_UNAVAILABLE,
-      );
+
+      logger.warn('[Cashfree Sandbox] Connection fallback in Sandbox Test Mode', { orderId, error: err.message });
+      return {
+        providerOrderId: orderId,
+        paymentSessionId: `session_sandbox_${orderId}_${Date.now()}`,
+        orderStatus: 'ACTIVE',
+        cfOrderId: `cf_sandbox_${Date.now()}`,
+      };
     }
   }
 
@@ -188,11 +237,12 @@ class CashfreeProvider extends PaymentProvider {
    * Fetches order status from Cashfree.
    *
    * @param {string} providerOrderId
+   * @param {object} [metadata] Optional diagnostic context (e.g. bookingId, paymentId)
    * @returns {Promise<object>}
    */
-  async getOrderStatus(providerOrderId) {
+  async getOrderStatus(providerOrderId, metadata = {}) {
     if (this.mockDelegate && typeof this.mockDelegate.getOrderStatus === 'function') {
-      return this.mockDelegate.getOrderStatus(providerOrderId);
+      return this.mockDelegate.getOrderStatus(providerOrderId, metadata);
     }
 
     if (this.envMode === 'PRODUCTION') {
@@ -212,6 +262,23 @@ class CashfreeProvider extends PaymentProvider {
       const data = await response.json().catch(() => ({}));
 
       if (!response.ok) {
+        // Handle 404 cleanly across both PRODUCTION and SANDBOX environments
+        if (response.status === 404) {
+          this._log404Once(providerOrderId, {
+            message: data.message,
+            bookingId: metadata.bookingId,
+            paymentId: metadata.paymentId,
+          });
+          return {
+            providerOrderId,
+            orderStatus: 'NOT_FOUND',
+            notFound: true,
+            httpStatus: 404,
+            orderAmount: null,
+            orderCurrency: 'INR',
+          };
+        }
+
         if (this.envMode === 'SANDBOX') {
           return {
             providerOrderId,
@@ -326,4 +393,8 @@ class CashfreeProvider extends PaymentProvider {
   }
 }
 
-module.exports = new CashfreeProvider();
+const defaultInstance = new CashfreeProvider();
+defaultInstance.CashfreeProvider = CashfreeProvider;
+
+module.exports = defaultInstance;
+module.exports.CashfreeProvider = CashfreeProvider;

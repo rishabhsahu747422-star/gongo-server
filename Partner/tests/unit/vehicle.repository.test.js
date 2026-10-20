@@ -200,6 +200,7 @@ describe('Unit: VehicleRepository - status guards against pg-mem (real SQL)', ()
       CREATE TABLE vehicle_pricing (
         vehicle_id TEXT, price_per_hour NUMERIC, price_3_hours NUMERIC, price_6_hours NUMERIC,
         price_12_hours NUMERIC, price_per_4_hours NUMERIC, price_per_day NUMERIC,
+        km_limit_per_day NUMERIC, km_limit_per_hour NUMERIC, km_limit_3_hours NUMERIC, km_limit_6_hours NUMERIC, km_limit_12_hours NUMERIC,
         security_deposit NUMERIC, extra_km_charge NUMERIC, currency TEXT, is_active BOOLEAN
       );
       CREATE TABLE bookings (

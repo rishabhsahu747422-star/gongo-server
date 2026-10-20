@@ -80,6 +80,22 @@ function formatVehicle(v) {
     ? Number(v.price_12_hours)
     : (v.price12Hours !== null && v.price12Hours !== undefined ? Number(v.price12Hours) : null);
 
+  const kmLimitPerDay = v.km_limit_per_day !== null && v.km_limit_per_day !== undefined
+    ? Number(v.km_limit_per_day)
+    : (v.kmLimitPerDay !== null && v.kmLimitPerDay !== undefined ? Number(v.kmLimitPerDay) : null);
+  const kmLimitPerHour = v.km_limit_per_hour !== null && v.km_limit_per_hour !== undefined
+    ? Number(v.km_limit_per_hour)
+    : (v.kmLimitPerHour !== null && v.kmLimitPerHour !== undefined ? Number(v.kmLimitPerHour) : null);
+  const kmLimit3Hours = v.km_limit_3_hours !== null && v.km_limit_3_hours !== undefined
+    ? Number(v.km_limit_3_hours)
+    : (v.kmLimit3Hours !== null && v.kmLimit3Hours !== undefined ? Number(v.kmLimit3Hours) : null);
+  const kmLimit6Hours = v.km_limit_6_hours !== null && v.km_limit_6_hours !== undefined
+    ? Number(v.km_limit_6_hours)
+    : (v.kmLimit6Hours !== null && v.kmLimit6Hours !== undefined ? Number(v.kmLimit6Hours) : null);
+  const kmLimit12Hours = v.km_limit_12_hours !== null && v.km_limit_12_hours !== undefined
+    ? Number(v.km_limit_12_hours)
+    : (v.kmLimit12Hours !== null && v.kmLimit12Hours !== undefined ? Number(v.kmLimit12Hours) : null);
+
   return {
     id: v.id,
     vehicleReference: v.vehicle_reference || null,
@@ -127,6 +143,16 @@ function formatVehicle(v) {
             price_12_hours: price12Hours,
             price_per_4_hours: Number(v.price_per_4_hours || 0),
             price_per_day: Number(v.price_per_day || 0),
+            kmLimitPerDay,
+            kmLimitPerHour,
+            kmLimit3Hours,
+            kmLimit6Hours,
+            kmLimit12Hours,
+            km_limit_per_day: kmLimitPerDay,
+            km_limit_per_hour: kmLimitPerHour,
+            km_limit_3_hours: kmLimit3Hours,
+            km_limit_6_hours: kmLimit6Hours,
+            km_limit_12_hours: kmLimit12Hours,
             securityDeposit: Number(v.security_deposit || 0),
             extraKmCharge: Number(v.extra_km_charge || 0),
             currency: v.currency || "INR",
@@ -159,6 +185,16 @@ function formatVehicle(v) {
       v.price_per_4_hours !== undefined && v.price_per_4_hours !== null
         ? Number(v.price_per_4_hours)
         : 0,
+    kmLimitPerDay,
+    kmLimitPerHour,
+    kmLimit3Hours,
+    kmLimit6Hours,
+    kmLimit12Hours,
+    km_limit_per_day: kmLimitPerDay,
+    km_limit_per_hour: kmLimitPerHour,
+    km_limit_3_hours: kmLimit3Hours,
+    km_limit_6_hours: kmLimit6Hours,
+    km_limit_12_hours: kmLimit12Hours,
     securityDeposit:
       v.security_deposit !== undefined && v.security_deposit !== null
         ? Number(v.security_deposit)
@@ -274,6 +310,11 @@ class VehicleService {
             price12Hours: validated.pricing.price12Hours,
             pricePer4Hours: validated.pricing.pricePer4Hours,
             pricePerDay: validated.pricing.pricePerDay,
+            kmLimitPerDay: validated.pricing.kmLimitPerDay,
+            kmLimitPerHour: validated.pricing.kmLimitPerHour,
+            kmLimit3Hours: validated.pricing.kmLimit3Hours,
+            kmLimit6Hours: validated.pricing.kmLimit6Hours,
+            kmLimit12Hours: validated.pricing.kmLimit12Hours,
             securityDeposit: validated.pricing.securityDeposit,
             extraKmCharge: validated.pricing.extraKmCharge,
             validFrom: new Date().toISOString(),
@@ -287,6 +328,11 @@ class VehicleService {
         created.price_6_hours = pricingRecord.price_6_hours;
         created.price_12_hours = pricingRecord.price_12_hours;
         created.price_per_4_hours = pricingRecord.price_per_4_hours;
+        created.km_limit_per_day = pricingRecord.km_limit_per_day;
+        created.km_limit_per_hour = pricingRecord.km_limit_per_hour;
+        created.km_limit_3_hours = pricingRecord.km_limit_3_hours;
+        created.km_limit_6_hours = pricingRecord.km_limit_6_hours;
+        created.km_limit_12_hours = pricingRecord.km_limit_12_hours;
         created.security_deposit = pricingRecord.security_deposit;
         created.extra_km_charge = pricingRecord.extra_km_charge;
         created.currency = pricingRecord.currency;
