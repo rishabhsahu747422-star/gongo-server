@@ -210,18 +210,37 @@ class PaymentService {
         if (pStatus === 'paid' || pStatus === 'success') {
           throw new BadRequestError('Booking has already been paid', PAYMENT_ERROR_CODES.PAYMENT_ALREADY_COMPLETED);
         }
-        // Active payment order already exists — safely return it
-        logger.info('Reusing existing active payment order for booking', {
+
+        // Cashfree payment sessions expire in 15-20 minutes.
+        // If the session is older than 12 minutes (720,000 ms), expire the stale payment order and generate a fresh Cashfree session.
+        const paymentCreatedAt = existingPayment.createdAt ? new Date(existingPayment.createdAt).getTime() : 0;
+        const sessionAgeMs = Date.now() - paymentCreatedAt;
+        const isSessionExpired = sessionAgeMs > 12 * 60 * 1000;
+
+        if (!isSessionExpired) {
+          logger.info('Reusing existing active payment order for booking', {
+            bookingId: booking.id,
+            providerOrderId: existingPayment.providerOrderId,
+            sessionAgeMinutes: Math.round(sessionAgeMs / 60000),
+          });
+          if (existingPayment.metadata?.paymentSessionId && !existingPayment.paymentSessionId) {
+            existingPayment.paymentSessionId = existingPayment.metadata.paymentSessionId;
+          }
+          return {
+            payment: existingPayment,
+            isIdempotentReplay: true,
+          };
+        }
+
+        logger.info('Existing payment order session is stale/expired. Expiring record and creating fresh Cashfree order', {
           bookingId: booking.id,
           providerOrderId: existingPayment.providerOrderId,
+          sessionAgeMinutes: Math.round(sessionAgeMs / 60000),
         });
-        if (existingPayment.metadata?.paymentSessionId && !existingPayment.paymentSessionId) {
-          existingPayment.paymentSessionId = existingPayment.metadata.paymentSessionId;
-        }
-        return {
-          payment: existingPayment,
-          isIdempotentReplay: true,
-        };
+        await this.paymentRepository.updateStatus(existingPayment.id, PAYMENT_STATUS.CANCELLED, {
+          failedAt: new Date(),
+          failureReason: 'Payment session expired; generating fresh session on retry.',
+        });
       }
 
       // 5. Authoritative server amount from pricingSnapshot (excluding separate pickup security deposit)
