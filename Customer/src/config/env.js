@@ -112,11 +112,11 @@ const env = cleanEnv(process.env, {
     docs: 'PostgreSQL connection string. Format: postgresql://user:pass@host:port/db',
   }),
   DB_POOL_MIN: num({
-    default: 2,
-    docs: 'Minimum pg pool connections',
+    default: 0,
+    docs: 'Minimum pg pool connections (0 allows idle scale-down in session pooler mode)',
   }),
   DB_POOL_MAX: num({
-    default: 10,
+    default: 3,
     docs: 'Maximum pg pool connections',
   }),
   DB_IDLE_TIMEOUT_MS: num({
@@ -315,6 +315,16 @@ const env = cleanEnv(process.env, {
     docs: 'Enables development-only dummy payment bypass. Strictly disabled outside development.',
   }),
 });
+
+if (env.DB_POOL_MIN < 0) {
+  throw new Error('DB_POOL_MIN must be >= 0');
+}
+if (env.DB_POOL_MAX < 1) {
+  throw new Error('DB_POOL_MAX must be >= 1');
+}
+if (env.DB_POOL_MIN > env.DB_POOL_MAX) {
+  throw new Error(`DB_POOL_MIN (${env.DB_POOL_MIN}) must be <= DB_POOL_MAX (${env.DB_POOL_MAX})`);
+}
 
 // ── Production fail-closed guards ──────────────────────────────
 // Defaults above exist for local development only. In production a missing or

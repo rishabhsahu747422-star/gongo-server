@@ -33,11 +33,19 @@ Critical:
   lockouts); `true` is rejected by the sub-app validators.
 - `CORS_ORIGINS`, `CORS_ORIGIN`, `CORS_ALLOWED_ORIGINS`: the same list of browser origins
   (Admin web panel). Mobile apps need no CORS entry.
-- `DB_POOL_MAX`: each sub-app opens its own pool, so one instance uses up to 3 × `DB_POOL_MAX`
-  connections. Size against the Supabase pooler limit × instance count.
-- `ENABLE_WORKERS` (default true): runs no-show auto-cancellation and the Partner/Admin outbox
-  workers. They use `FOR UPDATE SKIP LOCKED` and partition `outbox_events` by event type, so
-  several instances are safe.
+- `DB_POOL_MIN=0`: minimum PostgreSQL connections per pool. Must be set to `0` when connecting
+  to Supabase Session Pooler (port 5432, pool_size 15). Preserving `0` allows idle sockets to be
+  reaped so they do not exhaust the session pooler.
+- `DB_POOL_MAX=3`: maximum PostgreSQL connections per pool. Because the unified backend creates
+  three separate pools (Customer, Partner, Admin), total peak connections per process =
+  `3 × DB_POOL_MAX`. With `DB_POOL_MAX=3`, peak demand is 9 connections, leaving 6 headroom
+  connections on Supabase's 15-connection session pooler for Supabase Studio, SQL Editor, and
+  administrative operations.
+- `DB_IDLE_TIMEOUT_MS=30000`: closes idle connections after 30s so pooler slots are freed when traffic subsides.
+- `DB_CONNECTION_TIMEOUT_MS=10000`: 10-second timeout on connection acquisition before failing fast.
+- `ENABLE_WORKERS` (default true): runs no-show auto-cancellation, payment timeouts, and the
+  Partner/Admin outbox workers. Workers reuse the existing shared sub-app pools (they do NOT
+  initialize duplicate pools) and use `FOR UPDATE SKIP LOCKED`, so they are safe across multiple instances.
 
 ## 3. Database — before the first deploy of this version
 
@@ -318,7 +326,7 @@ The repository does not commit to a provider. Any of these works with the same s
 | Start | `npm start` (Docker image runs `node src/server.js`) |
 | Port | platform-provided `$PORT` (image default 8080) |
 | Health check path | `/health/ready` (readiness), `/health/live` (liveness) |
-| Instances | ≥1; workers are multi-instance safe. Budget DB connections: 3 × `DB_POOL_MAX` per instance |
+| Instances | 1 (Render Free/Starter tier with Supabase Session Pooler limit 15). Budget: 3 pools × `DB_POOL_MAX` = 9 connections max. During zero-downtime rolling deploys, transient overlap is protected by `DB_POOL_MIN=0` and single-probe startup. For multi-instance horizontal scaling, configure `DB_POOL_MAX=2` (6 connections/instance) or upgrade Supabase pool size. |
 
 The assigned HTTPS hostname needs no code change: put the browser origins that call the API
 in `CORS_ORIGINS` / `CORS_ORIGIN` / `CORS_ALLOWED_ORIGINS`, point the apps at

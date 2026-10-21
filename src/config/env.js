@@ -2,7 +2,7 @@
 
 require('dotenv').config();
 
-const { cleanEnv, str, port, bool } = require('envalid');
+const { cleanEnv, str, port, bool, num } = require('envalid');
 
 /**
  * Unified-process configuration only. Each sub-app (Customer, Partner, Admin)
@@ -38,10 +38,28 @@ const env = cleanEnv(
       devDefault: true,
       docs: 'Run background workers (no-show auto-cancellation, partner/admin outbox) in this process. Workers use SKIP LOCKED and are safe on multiple instances.',
     }),
+    DB_POOL_MIN: num({
+      default: 0,
+      docs: 'Minimum PostgreSQL connections per pool (defaults to 0 for Supabase session pooler compatibility)',
+    }),
+    DB_POOL_MAX: num({
+      default: 3,
+      docs: 'Maximum PostgreSQL connections per pool (defaults to 3, yielding 9 max across 3 pools)',
+    }),
   },
   {
     strict: false,
   },
 );
+
+if (env.DB_POOL_MIN < 0) {
+  throw new Error('DB_POOL_MIN must be >= 0');
+}
+if (env.DB_POOL_MAX < 1) {
+  throw new Error('DB_POOL_MAX must be >= 1');
+}
+if (env.DB_POOL_MIN > env.DB_POOL_MAX) {
+  throw new Error(`DB_POOL_MIN (${env.DB_POOL_MIN}) must be <= DB_POOL_MAX (${env.DB_POOL_MAX})`);
+}
 
 module.exports = env;

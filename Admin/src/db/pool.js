@@ -17,12 +17,16 @@ if (env.DB_SSL || isSupabase || env.NODE_ENV === 'production') {
 
 let keepAliveTimer = null;
 
+const poolMin = typeof env.DB_POOL_MIN === 'number' && !Number.isNaN(env.DB_POOL_MIN) ? Math.max(0, env.DB_POOL_MIN) : 0;
+const poolMax = typeof env.DB_POOL_MAX === 'number' && !Number.isNaN(env.DB_POOL_MAX) ? Math.max(1, env.DB_POOL_MAX) : 3;
+const safeMin = Math.min(poolMin, poolMax);
+
 const activePool = new Pool({
   connectionString: env.DATABASE_URL,
-  min: env.DB_POOL_MIN || 2,
-  max: env.DB_POOL_MAX || 10,
-  idleTimeoutMillis: env.DB_IDLE_TIMEOUT_MS || 300000,
-  connectionTimeoutMillis: env.DB_CONNECTION_TIMEOUT_MS || 10000,
+  min: safeMin,
+  max: poolMax,
+  idleTimeoutMillis: env.DB_IDLE_TIMEOUT_MS ?? 30000,
+  connectionTimeoutMillis: env.DB_CONNECTION_TIMEOUT_MS ?? 10000,
   ssl: sslConfig,
   keepAlive: true,
   keepAliveInitialDelayMillis: 10000,
@@ -60,28 +64,24 @@ function resetMockPool() {
 }
 
 /**
- * Startup connectivity check.
+ * Startup connectivity check with lightweight single-connection probe.
  */
 async function connectDatabase() {
   if (env.NODE_ENV === 'test') {
     return;
   }
 
-  const clients = [];
+  let client;
   try {
-    const warmCount = Math.max(1, Math.min(env.DB_POOL_MIN || 2, 3));
-    for (let i = 0; i < warmCount; i++) {
-      clients.push(await getPool().connect());
-    }
-    await Promise.all(clients.map((c) => c.query('SELECT 1')));
-    logger.info('PostgreSQL connection healthy and pool warmed', {
-      warmConnections: warmCount,
+    client = await getPool().connect();
+    await client.query('SELECT 1');
+    logger.info('PostgreSQL connection healthy and verified', {
       poolTotal: getPool().totalCount,
       poolIdle: getPool().idleCount,
     });
 
-    // Keep connections warm to prevent silent middlebox/WAN socket drops
-    if (!keepAliveTimer && env.NODE_ENV !== 'test') {
+    // Only keep connections warm in background if min pool size > 0
+    if (safeMin > 0 && !keepAliveTimer && env.NODE_ENV !== 'test') {
       keepAliveTimer = setInterval(() => {
         getPool().query('SELECT 1').catch(() => {});
       }, 45000);
@@ -105,11 +105,11 @@ async function connectDatabase() {
       logger.error('Failed to register dev resolvers', resolverErr);
     }
   } finally {
-    clients.forEach((c) => {
+    if (client) {
       try {
-        c.release();
+        client.release();
       } catch (_) {}
-    });
+    }
   }
 }
 

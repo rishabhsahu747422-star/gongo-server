@@ -18,13 +18,19 @@ if (env.DB_SSL || env.NODE_ENV === 'production' || (env.DATABASE_URL && (env.DAT
 
 let keepAliveTimer = null;
 
+const poolMin = typeof env.DB_POOL_MIN === 'number' && !Number.isNaN(env.DB_POOL_MIN) ? Math.max(0, env.DB_POOL_MIN) : 0;
+const poolMax = typeof env.DB_POOL_MAX === 'number' && !Number.isNaN(env.DB_POOL_MAX) ? Math.max(1, env.DB_POOL_MAX) : 3;
+const safeMin = Math.min(poolMin, poolMax);
+
 const pool = new Pool({
   connectionString: env.DATABASE_URL,
-  min: env.DB_POOL_MIN || 3,
-  max: env.DB_POOL_MAX || 10,
-  idleTimeoutMillis: env.DB_IDLE_TIMEOUT_MS || 300000,
-  connectionTimeoutMillis: env.DB_CONNECTION_TIMEOUT_MS || 10000,
+  min: safeMin,
+  max: poolMax,
+  idleTimeoutMillis: env.DB_IDLE_TIMEOUT_MS ?? 30000,
+  connectionTimeoutMillis: env.DB_CONNECTION_TIMEOUT_MS ?? 10000,
   ssl: sslConfig,
+  keepAlive: true,
+  keepAliveInitialDelayMillis: 10000,
 });
 
 pool.on('connect', (client) => {
@@ -44,28 +50,24 @@ pool.on('error', (err) => {
 });
 
 /**
- * Startup connectivity check and connection pool pre-warming.
+ * Startup connectivity check with lightweight single-connection probe.
  */
 async function connectDatabase() {
   if (env.NODE_ENV === 'test') {
     return;
   }
 
-  const warmTargets = Math.min(env.DB_POOL_MIN || 3, 3);
-  const clients = [];
+  let client;
   try {
-    for (let i = 0; i < warmTargets; i++) {
-      clients.push(await pool.connect());
-    }
-    await Promise.all(clients.map((c) => c.query('SELECT 1')));
-    logger.info('PostgreSQL connection established and pool pre-warmed successfully', {
-      warmedConnections: clients.length,
+    client = await pool.connect();
+    await client.query('SELECT 1');
+    logger.info('PostgreSQL connection established successfully', {
       poolTotal: pool.totalCount,
       poolIdle: pool.idleCount,
     });
 
-    // Keep connections warm to prevent aggressive 30s-60s idle socket teardown
-    if (!keepAliveTimer && env.NODE_ENV !== 'test') {
+    // Only keep connections warm in background if min pool size > 0
+    if (safeMin > 0 && !keepAliveTimer && env.NODE_ENV !== 'test') {
       keepAliveTimer = setInterval(() => {
         pool.query('SELECT 1').catch(() => {});
       }, 45000);
@@ -82,11 +84,11 @@ async function connectDatabase() {
     }
     logger.warn('Server starting in degraded state: database is currently unreachable. Dependent endpoints will return 503.');
   } finally {
-    clients.forEach((c) => {
+    if (client) {
       try {
-        c.release();
+        client.release();
       } catch (_) {}
-    });
+    }
   }
 }
 

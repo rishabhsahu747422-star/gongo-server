@@ -98,9 +98,9 @@ const env = cleanEnv(
     DB_NAME: str({ default: 'gongo_partner', docs: 'Database name' }),
     DB_USER: str({ default: 'postgres', docs: 'Database user' }),
     DB_PASSWORD: str({ default: 'postgres', docs: 'Database password' }),
-    DB_POOL_MIN: num({ default: 2, docs: 'Minimum DB connections' }),
-    DB_POOL_MAX: num({ default: 10, docs: 'Maximum DB connections' }),
-    DB_IDLE_TIMEOUT_MS: num({ default: 300000, docs: 'Idle connection timeout in ms' }),
+    DB_POOL_MIN: num({ default: 0, docs: 'Minimum DB connections (0 allows idle scale-down in session pooler mode)' }),
+    DB_POOL_MAX: num({ default: 3, docs: 'Maximum DB connections' }),
+    DB_IDLE_TIMEOUT_MS: num({ default: 30000, docs: 'Idle connection timeout in ms' }),
     DB_CONNECTION_TIMEOUT_MS: num({ default: 10000, docs: 'Connection timeout in ms' }),
     DB_SSL: bool({ default: false, docs: 'Use SSL for DB connection' }),
 
@@ -222,6 +222,16 @@ const env = cleanEnv(
     reporter: customReporter,
   },
 );
+
+if (env.DB_POOL_MIN < 0) {
+  throw new Error('DB_POOL_MIN must be >= 0');
+}
+if (env.DB_POOL_MAX < 1) {
+  throw new Error('DB_POOL_MAX must be >= 1');
+}
+if (env.DB_POOL_MIN > env.DB_POOL_MAX) {
+  throw new Error(`DB_POOL_MIN (${env.DB_POOL_MIN}) must be <= DB_POOL_MAX (${env.DB_POOL_MAX})`);
+}
 
 // Production fail-fast checks
 if (env.isProduction) {
