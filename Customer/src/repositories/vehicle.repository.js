@@ -81,6 +81,30 @@ class VehicleRepository extends BaseRepository {
       isGongoVerified: Boolean(row.is_verified || (row.verification_status && ['VERIFIED', 'APPROVED', 'verified', 'approved'].includes(row.verification_status))),
       shopName: row.shop_name || null,
       primaryImageUrl: row.primary_image_url || null,
+      images: Array.isArray(row.images)
+        ? row.images.map((img) => ({
+            id: img.id,
+            displayOrder: Number(img.displayOrder || img.display_order || 0),
+            isPrimary: Boolean(img.isPrimary || img.is_primary),
+            imageUrl: img.imageUrl || img.file_url || null,
+          }))
+        : (row.images && typeof row.images === 'string'
+            ? (() => {
+                try {
+                  const parsed = JSON.parse(row.images);
+                  return Array.isArray(parsed)
+                    ? parsed.map((img) => ({
+                        id: img.id,
+                        displayOrder: Number(img.displayOrder || img.display_order || 0),
+                        isPrimary: Boolean(img.isPrimary || img.is_primary),
+                        imageUrl: img.imageUrl || img.file_url || null,
+                      }))
+                    : [];
+                } catch {
+                  return [];
+                }
+              })()
+            : []),
       createdAt: row.created_at,
       ...(row.distance_km !== undefined ? { distanceKm: Number(row.distance_km) } : {}),
     };
@@ -197,7 +221,19 @@ class VehicleRepository extends BaseRepository {
         WHERE vi.vehicle_id = v.id AND (vi.is_active = true OR vi.is_active IS NULL)
         ORDER BY COALESCE(vi.is_cover, false) DESC, vi.is_primary DESC, COALESCE(vi.sort_order, vi.display_order, 0) ASC
         LIMIT 1
-      )) AS primary_image_url
+      )) AS primary_image_url,
+      COALESCE((
+        SELECT json_agg(
+          json_build_object(
+            'id', vi.id,
+            'displayOrder', COALESCE(vi.sort_order, vi.display_order, 0),
+            'isPrimary', COALESCE(vi.is_cover, vi.is_primary, false),
+            'imageUrl', COALESCE(vi.file_url, vi.image_url, vi.storage_key)
+          ) ORDER BY COALESCE(vi.is_cover, vi.is_primary, false) DESC, COALESCE(vi.sort_order, vi.display_order, 0) ASC
+        )
+        FROM vehicle_images vi
+        WHERE vi.vehicle_id = v.id AND (vi.is_active = true OR vi.is_active IS NULL)
+      ), '[]'::json) AS images
     `;
   }
 
@@ -257,7 +293,8 @@ class VehicleRepository extends BaseRepository {
       true AS is_verified,
       sh.shop_name,
       v.created_at,
-      NULL::text AS primary_image_url
+      NULL::text AS primary_image_url,
+      '[]'::json AS images
     `;
   }
 
@@ -305,8 +342,8 @@ class VehicleRepository extends BaseRepository {
         WHERE b.vehicle_id = v.id
           AND b.start_at < $${paramIdx + 1}::timestamptz
           AND (b.end_at + interval '1 hour') > $${paramIdx}::timestamptz
-          AND b.status NOT IN ('cancelled', 'refunded', 'completed', 'returned', 'CANCELLED', 'REFUNDED', 'COMPLETED', 'RETURNED')
-          AND (b.booking_status IS NULL OR b.booking_status NOT IN ('CANCELLED', 'REFUNDED', 'COMPLETED', 'RETURNED', 'cancelled', 'refunded', 'completed', 'returned'))
+          AND b.status IS NOT NULL
+          AND LOWER(b.status) NOT IN ('cancelled', 'refunded', 'completed', 'returned')
       )`);
       params.push(startAt);
       params.push(endAt);
@@ -496,6 +533,7 @@ class VehicleRepository extends BaseRepository {
             const conflictRes = await this.query(`
               SELECT DISTINCT vehicle_id FROM bookings
               WHERE start_at < $2 AND (end_at + interval '1 hour') > $1
+                AND status IS NOT NULL
                 AND LOWER(status) NOT IN ('cancelled', 'refunded', 'completed', 'returned')
             `, [startAt, endAt]);
             const conflictIds = (conflictRes.rows || []).map(r => r.vehicle_id).filter(Boolean);
@@ -668,8 +706,8 @@ class VehicleRepository extends BaseRepository {
         WHERE b.vehicle_id = v.id
           AND b.start_at < $10::timestamptz
           AND (b.end_at + interval '1 hour') > $9::timestamptz
-          AND b.status NOT IN ('cancelled', 'refunded', 'completed', 'returned', 'CANCELLED', 'REFUNDED', 'COMPLETED', 'RETURNED')
-          AND (b.booking_status IS NULL OR b.booking_status NOT IN ('CANCELLED', 'REFUNDED', 'COMPLETED', 'RETURNED', 'cancelled', 'refunded', 'completed', 'returned'))
+          AND b.status IS NOT NULL
+          AND LOWER(b.status) NOT IN ('cancelled', 'refunded', 'completed', 'returned')
       )`);
       qParams.push(startAt);
       qParams.push(endAt);

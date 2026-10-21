@@ -202,6 +202,18 @@ class VehicleService {
         if (summary.primaryImageUrl && !summary.primaryImageUrl.startsWith('http')) {
           summary.primaryImageUrl = await VehicleService.resolveImageUrl(summary.primaryImageUrl);
         }
+        if (Array.isArray(summary.images) && summary.images.length > 0) {
+          summary.images = await Promise.all(
+            summary.images.map(async (img) => {
+              const url = typeof img === 'object' ? (img.imageUrl || img.file_url) : img;
+              if (url && !url.startsWith('http')) {
+                const resolved = await VehicleService.resolveImageUrl(url);
+                return typeof img === 'object' ? { ...img, imageUrl: resolved || url } : (resolved || url);
+              }
+              return img;
+            })
+          );
+        }
         return summary;
       })
     );
@@ -350,7 +362,27 @@ class VehicleService {
       endAt: endAt || null,
     });
 
-    const vehicles = rows.map((row) => VehicleRepository.mapVehicleSummary(row));
+    const vehicles = await Promise.all(
+      rows.map(async (row) => {
+        const summary = VehicleRepository.mapVehicleSummary(row);
+        if (summary.primaryImageUrl && !summary.primaryImageUrl.startsWith('http')) {
+          summary.primaryImageUrl = await VehicleService.resolveImageUrl(summary.primaryImageUrl);
+        }
+        if (Array.isArray(summary.images) && summary.images.length > 0) {
+          summary.images = await Promise.all(
+            summary.images.map(async (img) => {
+              const url = typeof img === 'object' ? (img.imageUrl || img.file_url) : img;
+              if (url && !url.startsWith('http')) {
+                const resolved = await VehicleService.resolveImageUrl(url);
+                return typeof img === 'object' ? { ...img, imageUrl: resolved || url } : (resolved || url);
+              }
+              return img;
+            })
+          );
+        }
+        return summary;
+      })
+    );
 
     return {
       vehicles,
