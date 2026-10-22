@@ -296,9 +296,13 @@ const env = cleanEnv(process.env, {
     default: '2025-01-01',
     docs: 'Cashfree PG API version (Production 2025-01-01).',
   }),
+  BACKEND_PUBLIC_URL: str({
+    default: 'https://gongo-server-myqf.onrender.com',
+    docs: 'Publicly reachable HTTPS base URL of deployed GONGO backend.',
+  }),
   CASHFREE_RETURN_URL: str({
-    default: 'https://gongo-server-myqf.onrender.com/api/v1/customer/payments/cashfree/return?order_id={order_id}',
-    docs: 'Frontend return URL for customer post-payment redirect.',
+    default: 'https://gongo-server-myqf.onrender.com/api/v1/payments/return?order_id={order_id}',
+    docs: 'Backend HTTPS return URL for customer post-payment redirect.',
   }),
   CASHFREE_NOTIFY_URL: str({
     default: 'https://gongo-server-myqf.onrender.com/api/v1/payments/webhook/cashfree',

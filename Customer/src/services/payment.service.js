@@ -293,6 +293,7 @@ class PaymentService {
 
       // 7. Create order on Cashfree provider
       const providerOrderId = PaymentService.generateOrderId(booking.id);
+      const backendBase = (process.env.BACKEND_PUBLIC_URL || env.BACKEND_PUBLIC_URL || 'https://gongo-server-myqf.onrender.com').replace(/\/+$/, '');
       const providerResponse = await this.provider.createOrder({
         orderId: providerOrderId,
         orderAmount,
@@ -303,6 +304,11 @@ class PaymentService {
           phone: customer ? customer.phone : '9999999999',
           name: customer ? customer.name : 'GONGO Customer',
         },
+        orderMeta: {
+          returnUrl: `${backendBase}/api/v1/payments/return?order_id=${providerOrderId}`,
+          notifyUrl: `${backendBase}/api/v1/payments/webhook/cashfree`,
+        },
+        orderNote: `GONGO Vehicle Rental: Booking #${booking.bookingNumber || booking.id}`,
       });
 
       // 8. Create payment record in database
@@ -522,6 +528,187 @@ class PaymentService {
   }
 
   /**
+   * Authoritatively verifies and reconciles a payment by its Cashfree provider order ID.
+   * Invoked by the HTTPS payment return handler, webhook fallbacks, or direct inquiries.
+   *
+   * @param {string} providerOrderId
+   * @returns {Promise<{
+   *   success: boolean,
+   *   status: string,
+   *   bookingId?: string,
+   *   paymentId?: string,
+   *   amount?: number,
+   *   currency?: string,
+   *   failureReason?: string,
+   * }>}
+   */
+  async reconcilePaymentByProviderOrderId(providerOrderId) {
+    if (!providerOrderId || typeof providerOrderId !== 'string') {
+      return { success: false, status: 'INVALID_ORDER_ID', failureReason: 'Missing or invalid order ID' };
+    }
+
+    const cleanOrderId = providerOrderId.trim();
+    const payment = await this.paymentRepository.findByProviderOrderId(cleanOrderId);
+    if (!payment) {
+      logger.warn('Payment reconciliation attempted for unknown provider order ID', { providerOrderId: cleanOrderId });
+      return { success: false, status: 'NOT_FOUND', orderId: cleanOrderId, failureReason: 'Order record not found' };
+    }
+
+    const currentStatus = (payment.status || '').toLowerCase();
+
+    // If already marked SUCCESS / PAID, return immediately (idempotent)
+    if (currentStatus === 'paid' || currentStatus === 'success') {
+      return {
+        success: true,
+        status: PAYMENT_STATUS.SUCCESS,
+        bookingId: payment.bookingId,
+        paymentId: payment.id,
+        amount: Number(payment.amount),
+        currency: payment.currency || 'INR',
+      };
+    }
+
+    // Authoritative check with Cashfree PG
+    let orderStatus;
+    try {
+      orderStatus = await this.provider.getOrderStatus(cleanOrderId, {
+        bookingId: payment.bookingId,
+        paymentId: payment.id,
+      });
+    } catch (fetchErr) {
+      logger.error('Failed to query Cashfree during return reconciliation', {
+        providerOrderId: cleanOrderId,
+        error: fetchErr.message,
+      });
+      // Network or gateway error: keep pending state
+      return {
+        success: false,
+        status: PAYMENT_STATUS.PENDING,
+        bookingId: payment.bookingId,
+        paymentId: payment.id,
+        amount: Number(payment.amount),
+        currency: payment.currency || 'INR',
+        failureReason: 'Payment status currently verifying with gateway',
+      };
+    }
+
+    if (!orderStatus) {
+      return {
+        success: false,
+        status: PAYMENT_STATUS.PENDING,
+        bookingId: payment.bookingId,
+        paymentId: payment.id,
+        amount: Number(payment.amount),
+      };
+    }
+
+    // Cashfree returns 'PAID' or 'SUCCESS' for completed orders
+    if (orderStatus.orderStatus === 'PAID' || orderStatus.orderStatus === 'SUCCESS') {
+      const reconciled = await this.paymentRepository.transaction(async (client) => {
+        const lockedPayment = await this.paymentRepository.lockByProviderOrderId(cleanOrderId, client);
+        if (!lockedPayment) return null;
+
+        const lockedStatus = (lockedPayment.status || '').toLowerCase();
+        if (lockedStatus === 'paid' || lockedStatus === 'success') {
+          return { success: true, status: PAYMENT_STATUS.SUCCESS, alreadyProcessed: true };
+        }
+
+        // Amount & currency verification
+        const providerAmount = orderStatus.orderAmount;
+        if (
+          providerAmount !== null &&
+          providerAmount !== undefined &&
+          Math.abs(Number(lockedPayment.amount) - Number(providerAmount)) > 0.01
+        ) {
+          logger.error('Payment amount mismatch during return reconciliation', {
+            providerOrderId: cleanOrderId,
+            expected: Number(lockedPayment.amount),
+            received: Number(providerAmount),
+          });
+          await this._applyPaymentFailure(client, lockedPayment, {
+            failureReason: 'AMOUNT_MISMATCH',
+            cancellationReason: 'AMOUNT_MISMATCH',
+          });
+          return { success: false, status: PAYMENT_STATUS.FAILED, failureReason: 'AMOUNT_MISMATCH' };
+        }
+
+        if (orderStatus.orderCurrency && orderStatus.orderCurrency !== lockedPayment.currency) {
+          logger.error('Payment currency mismatch during return reconciliation', {
+            providerOrderId: cleanOrderId,
+            expected: lockedPayment.currency,
+            received: orderStatus.orderCurrency,
+          });
+          await this._applyPaymentFailure(client, lockedPayment, {
+            failureReason: 'CURRENCY_MISMATCH',
+            cancellationReason: 'CURRENCY_MISMATCH',
+          });
+          return { success: false, status: PAYMENT_STATUS.FAILED, failureReason: 'CURRENCY_MISMATCH' };
+        }
+
+        const applyResult = await this._applyPaymentSuccess(client, lockedPayment, {
+          providerOrderId: cleanOrderId,
+          paymentMethod: 'ONLINE',
+        });
+
+        return {
+          success: true,
+          status: PAYMENT_STATUS.SUCCESS,
+          applyResult,
+        };
+      });
+
+      return {
+        success: reconciled?.status === PAYMENT_STATUS.SUCCESS,
+        status: reconciled?.status || PAYMENT_STATUS.SUCCESS,
+        bookingId: payment.bookingId,
+        paymentId: payment.id,
+        amount: Number(payment.amount),
+        currency: payment.currency || 'INR',
+        failureReason: reconciled?.failureReason,
+      };
+    }
+
+    // Cashfree returns terminal failures
+    if (['FAILED', 'USER_DROPPED', 'CANCELLED', 'EXPIRED'].includes(orderStatus.orderStatus)) {
+      const reason = orderStatus.orderStatus === 'USER_DROPPED'
+        ? 'USER_CANCELLED_PAYMENT'
+        : `PAYMENT_${orderStatus.orderStatus}`;
+
+      await this.paymentRepository.transaction(async (client) => {
+        const lockedPayment = await this.paymentRepository.lockByProviderOrderId(cleanOrderId, client);
+        if (!lockedPayment) return;
+        const lockedStatus = (lockedPayment.status || '').toLowerCase();
+        if (lockedStatus === 'paid' || lockedStatus === 'success') return;
+
+        await this._applyPaymentFailure(client, lockedPayment, {
+          failureReason: reason,
+          cancellationReason: reason,
+        });
+      });
+
+      return {
+        success: false,
+        status: PAYMENT_STATUS.FAILED,
+        bookingId: payment.bookingId,
+        paymentId: payment.id,
+        amount: Number(payment.amount),
+        currency: payment.currency || 'INR',
+        failureReason: reason,
+      };
+    }
+
+    // Order is still ACTIVE / in progress
+    return {
+      success: false,
+      status: PAYMENT_STATUS.PENDING,
+      bookingId: payment.bookingId,
+      paymentId: payment.id,
+      amount: Number(payment.amount),
+      currency: payment.currency || 'INR',
+    };
+  }
+
+  /**
    * Initiates an authoritative Cashfree payment order for active rental overtime dues.
    *
    * CRITICAL SECURITY:
@@ -659,10 +846,8 @@ class PaymentService {
           name: customer ? customer.fullName : 'Customer',
         },
         orderMeta: {
-          returnUrl: typeof this.provider?.resolveReturnUrl === 'function'
-            ? this.provider.resolveReturnUrl(providerOrderId)
-            : undefined,
-          notifyUrl: process.env.CASHFREE_NOTIFY_URL || (process.env.BACKEND_PUBLIC_URL ? `${process.env.BACKEND_PUBLIC_URL}/api/v1/payments/webhook/cashfree` : undefined),
+          returnUrl: `${(process.env.BACKEND_PUBLIC_URL || env.BACKEND_PUBLIC_URL || 'https://gongo-server-myqf.onrender.com').replace(/\/+$/, '')}/api/v1/payments/return?order_id=${providerOrderId}`,
+          notifyUrl: `${(process.env.BACKEND_PUBLIC_URL || env.BACKEND_PUBLIC_URL || 'https://gongo-server-myqf.onrender.com').replace(/\/+$/, '')}/api/v1/payments/webhook/cashfree`,
         },
         orderNote: `GONGO Overtime Fare: Booking #${booking.bookingNumber || booking.id}`,
       });
@@ -831,6 +1016,7 @@ class PaymentService {
 
       // 8. Create order on Cashfree provider
       const providerOrderId = PaymentService.generateOrderId(booking.id);
+      const backendBase = (process.env.BACKEND_PUBLIC_URL || env.BACKEND_PUBLIC_URL || 'https://gongo-server-myqf.onrender.com').replace(/\/+$/, '');
       const providerResponse = await this.provider.createOrder({
         orderId: providerOrderId,
         orderAmount: settlementAmount,
@@ -841,6 +1027,11 @@ class PaymentService {
           phone: customer ? customer.phone : '9999999999',
           name: customer ? customer.name : 'GONGO Customer',
         },
+        orderMeta: {
+          returnUrl: `${backendBase}/api/v1/payments/return?order_id=${providerOrderId}`,
+          notifyUrl: `${backendBase}/api/v1/payments/webhook/cashfree`,
+        },
+        orderNote: `GONGO Post-Rental Settlement: Booking #${booking.bookingNumber || booking.id}`,
       });
 
       // 9. Create payment record in database with payment_type = POST_RENTAL_SETTLEMENT

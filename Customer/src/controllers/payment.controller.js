@@ -229,130 +229,158 @@ class PaymentController {
   }
 
   /**
-   * GET /api/v1/payments/cashfree/return
-   * GET /api/v1/bookings/:bookingId/payment-status
-   *
-   * Authoritative HTTPS browser return page and bridge for Cashfree post-checkout redirect.
-   * Authoritatively reconciles status, renders clean responsive UI, and deep-links back to app.
+   * GET /api/v1/payments/return
+   * POST /api/v1/payments/return
+   * Authoritative return handler invoked after Cashfree checkout.
+   * Performs backend-to-backend status inquiry, persists state, and renders
+   * an HTML return bridge that deep-links back to the GONGO mobile application.
    */
   async handlePaymentReturn(req, res, next) {
     try {
-      const orderId = (req.query.order_id || req.query.orderId || req.params.bookingId || req.params.orderId || '').trim();
+      let orderId = req.query.order_id
+        || req.body?.order_id
+        || req.query.orderId
+        || req.body?.orderId;
 
-      if (!orderId) {
-        if (req.accepts(['html', 'json']) === 'json' && !req.headers.accept?.includes('text/html')) {
+      const bookingIdParam = req.params?.bookingId;
+      if (!orderId && bookingIdParam) {
+        try {
+          const paymentRecord = await paymentService.paymentRepository.findByBookingId(bookingIdParam);
+          if (paymentRecord?.providerOrderId) {
+            orderId = paymentRecord.providerOrderId;
+          }
+        } catch (_) {}
+      }
+
+      if (!orderId || typeof orderId !== 'string') {
+        if (req.xhr || req.headers.accept?.includes('application/json')) {
           return res.status(HTTP_STATUS.BAD_REQUEST).json({
             success: false,
-            message: 'order_id query parameter is required',
+            message: 'Missing required order_id parameter',
           });
         }
+
+        if (bookingIdParam) {
+          const deepLink = `gongo://payment/result?booking_id=${encodeURIComponent(bookingIdParam)}&status=PENDING`;
+          res.setHeader('Content-Type', 'text/html; charset=utf-8');
+          return res.status(HTTP_STATUS.OK).send(
+            PaymentController._renderReturnBridgeHtml({
+              status: 'PENDING',
+              title: 'Payment Status',
+              message: 'Verifying payment status with Cashfree.',
+              badgeColor: '#F59E0B',
+              badgeText: 'PROCESSING',
+              deepLink,
+              orderId: '',
+            }),
+          );
+        }
+
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
         return res.status(HTTP_STATUS.BAD_REQUEST).send(
-          '<!DOCTYPE html><html><body style="font-family:sans-serif;text-align:center;padding:50px;"><h2>Missing order reference</h2><p>Please return to the GONGO app to review your booking.</p></body></html>'
+          PaymentController._renderReturnBridgeHtml({
+            status: 'ERROR',
+            title: 'Missing Order Information',
+            message: 'No valid order reference was received from Cashfree.',
+            deepLink: 'gongo://payment/result?status=ERROR',
+          }),
         );
       }
 
-      // 1. Authoritative lookup by providerOrderId or bookingId
-      const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-      let payment = null;
-      let booking = null;
-      try {
-        if (UUID_RE.test(orderId)) {
-          payment = await paymentService.paymentRepository.findLatestByBookingId(orderId);
-        }
-        if (!payment) {
-          payment = await paymentService.paymentRepository.findByProviderOrderId(orderId);
-        }
-        if (payment?.bookingId) {
-          booking = await paymentService.bookingRepository.findById(payment.bookingId);
-        }
-      } catch (dbErr) {
-        logger.warn('Could not query payment record for return URL, rendering fallback return page', {
+      const reconciliation = await paymentService.reconcilePaymentByProviderOrderId(orderId);
+      const { status, bookingId, amount } = reconciliation;
+
+      const deepLink = `gongo://payment/result?order_id=${encodeURIComponent(orderId)}&booking_id=${encodeURIComponent(bookingId || '')}&status=${encodeURIComponent(status || 'PENDING')}`;
+
+      // If client explicitly requests JSON (API inquiry)
+      if (req.xhr || req.headers.accept?.includes('application/json')) {
+        return sendSuccess(res, {
           orderId,
-          error: dbErr.message,
-        });
+          bookingId,
+          status,
+          isPaid: status === 'SUCCESS' || status === 'PAID',
+          amount,
+        }, 'Payment return processed successfully', HTTP_STATUS.OK);
       }
 
-      let currentStatus = (payment?.status || 'PENDING').toUpperCase();
+      let title;
+      let message;
+      let badgeColor;
+      let badgeText;
 
-      // 2. Authoritative sync with Cashfree if pending
-      if (payment?.providerOrderId && (currentStatus === 'PENDING' || currentStatus === 'IN_PROGRESS')) {
-        try {
-          const remoteOrder = await paymentService.provider.getOrderStatus(payment.providerOrderId, {
-            bookingId: payment.bookingId,
-            paymentId: payment.id,
-          });
-          if (remoteOrder && (remoteOrder.orderStatus === 'PAID' || remoteOrder.orderStatus === 'SUCCESS')) {
-            await paymentService.paymentRepository.transaction(async (client) => {
-              const lockedPayment = await paymentService.paymentRepository.lockByProviderOrderId(
-                payment.providerOrderId,
-                client,
-              );
-              if (lockedPayment) {
-                const lockedStatus = (lockedPayment.status || '').toLowerCase();
-                if (lockedStatus !== 'paid' && lockedStatus !== 'success') {
-                  await paymentService._applyPaymentSuccess(client, lockedPayment, {
-                    providerOrderId: payment.providerOrderId,
-                    paymentMethod: 'ONLINE',
-                  });
-                }
-              }
-            });
-            currentStatus = 'SUCCESS';
-          } else if (remoteOrder && (remoteOrder.orderStatus === 'FAILED' || remoteOrder.orderStatus === 'USER_DROPPED' || remoteOrder.orderStatus === 'CANCELLED')) {
-            currentStatus = 'FAILED';
-          }
-        } catch (_) {
-          // Fall back gracefully to current persisted database state
-        }
+      if (status === 'SUCCESS' || status === 'PAID') {
+        title = 'Payment Confirmed! 🎉';
+        message = amount
+          ? `Your payment of ₹${amount} was successfully verified.`
+          : 'Your payment was successfully verified.';
+        badgeColor = '#10B981';
+        badgeText = 'VERIFIED';
+      } else if (status === 'FAILED') {
+        title = 'Payment Incomplete';
+        message = 'The payment was not completed or was cancelled.';
+        badgeColor = '#EF4444';
+        badgeText = 'FAILED';
+      } else {
+        title = 'Payment Processing';
+        message = 'Your payment is being confirmed. Please return to the app.';
+        badgeColor = '#F59E0B';
+        badgeText = 'PROCESSING';
       }
 
-      // Normalize status string for display
-      if (currentStatus === 'PAID') currentStatus = 'SUCCESS';
+      const html = PaymentController._renderReturnBridgeHtml({
+        status,
+        title,
+        message,
+        badgeColor,
+        badgeText,
+        deepLink,
+        orderId,
+      });
 
-      // 3. Return JSON if requested by programmatic client
-      if (req.accepts(['html', 'json']) === 'json' && !req.headers.accept?.includes('text/html')) {
-        return res.status(HTTP_STATUS.OK).json({
-          success: true,
-          orderId,
-          bookingId: payment?.bookingId || null,
-          status: currentStatus,
-          isPaid: currentStatus === 'SUCCESS',
-          payment: payment ? withCashfreeEnvironment(payment) : null,
-        });
-      }
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      return res.status(HTTP_STATUS.OK).send(html);
+    } catch (err) {
+      return next(err);
+    }
+  }
 
-      // 4. Render secure, responsive HTML return bridge page for browser/WebView
-      const bookingId = payment?.bookingId || (UUID_RE.test(orderId) ? orderId : '');
-      const bookingRef = booking?.bookingReference || booking?.bookingNumber || bookingId || orderId;
-      const amountStr = payment?.amount ? `₹${Number(payment.amount).toFixed(2)}` : '';
-      const deepLinkUrl = `gongo://payment/result?order_id=${encodeURIComponent(orderId)}&status=${encodeURIComponent(currentStatus)}&booking_id=${encodeURIComponent(bookingId)}`;
+  static _escapeHtml(unsafe) {
+    if (typeof unsafe !== 'string') return '';
+    return unsafe
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }
 
-      const isSuccess = currentStatus === 'SUCCESS';
-      const isPending = currentStatus === 'PENDING' || currentStatus === 'IN_PROGRESS';
+  static _renderReturnBridgeHtml({
+    title,
+    message,
+    badgeColor,
+    badgeText,
+    deepLink,
+    orderId,
+  }) {
+    const escTitle = PaymentController._escapeHtml(title || 'GONGO Payment');
+    const escMessage = PaymentController._escapeHtml(message || '');
+    const escBadgeText = PaymentController._escapeHtml(badgeText || '');
+    const escBadgeColor = PaymentController._escapeHtml(badgeColor || '#FFB800');
+    const escOrderId = PaymentController._escapeHtml(orderId || '');
+    const safeDeepLink = encodeURI(deepLink || 'gongo://');
 
-      const statusTitle = isSuccess
-        ? 'Payment Successful'
-        : (isPending ? 'Payment Processing' : 'Payment Incomplete');
-      const statusColor = isSuccess ? '#10B981' : (isPending ? '#F59E0B' : '#EF4444');
-      const statusIcon = isSuccess ? '✓' : (isPending ? '⏳' : '✕');
-      const messageText = isSuccess
-        ? 'Your payment was successfully received and verified. Your vehicle booking is confirmed!'
-        : (isPending
-          ? 'Your payment is being confirmed with the bank. Please check your booking in the app.'
-          : 'Payment was not completed. You can safely retry payment from the GONGO app.');
-
-      const html = `<!DOCTYPE html>
+    return `<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>GONGO — Payment Verification</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${escTitle} - GONGO</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      background: #0B0F19;
-      color: #F3F4F6;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      background-color: #0A0A0A;
+      color: #FFFFFF;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       min-height: 100vh;
       display: flex;
       align-items: center;
@@ -360,97 +388,96 @@ class PaymentController {
       padding: 20px;
     }
     .card {
-      background: #111827;
-      border: 1px solid #1F2937;
+      background-color: #171717;
+      border: 1px solid #262626;
       border-radius: 24px;
       padding: 32px 24px;
       width: 100%;
-      max-width: 420px;
+      max-width: 400px;
       text-align: center;
-      box-shadow: 0 20px 40px rgba(0,0,0,0.6);
+      box-shadow: 0 20px 40px rgba(0,0,0,0.5);
+    }
+    .logo {
+      font-size: 24px;
+      font-weight: 900;
+      letter-spacing: 2px;
+      color: #FFB800;
+      margin-bottom: 24px;
     }
     .badge {
-      width: 72px;
-      height: 72px;
-      border-radius: 50%;
-      background: rgba(16, 185, 129, 0.15);
-      color: ${statusColor};
-      border: 2px solid ${statusColor};
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 36px;
-      font-weight: bold;
-      margin: 0 auto 20px;
+      display: inline-block;
+      padding: 6px 14px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      margin-bottom: 16px;
+      background-color: rgba(255, 255, 255, 0.08);
+      color: ${escBadgeColor};
+      border: 1px solid ${escBadgeColor};
     }
-    h1 { font-size: 22px; font-weight: 800; margin-bottom: 8px; color: #FFFFFF; }
-    p.msg { font-size: 14px; color: #9CA3AF; line-height: 1.5; margin-bottom: 24px; }
-    .details {
-      background: #1F2937;
-      border-radius: 14px;
-      padding: 16px;
+    h1 {
+      font-size: 20px;
+      font-weight: 800;
+      margin-bottom: 10px;
+      color: #FFFFFF;
+    }
+    p {
+      font-size: 14px;
+      color: #A3A3A3;
+      line-height: 1.5;
       margin-bottom: 24px;
-      text-align: left;
-      font-size: 13px;
     }
-    .row { display: flex; justify-content: space-between; margin-bottom: 8px; }
-    .row:last-child { margin-bottom: 0; }
-    .label { color: #9CA3AF; }
-    .val { font-weight: 700; color: #F9FAFB; word-break: break-all; }
     .btn {
       display: block;
       width: 100%;
-      background: #2563EB;
-      color: #FFFFFF;
+      background-color: #FFB800;
+      color: #000000;
       text-decoration: none;
-      font-weight: 700;
+      font-weight: 800;
       font-size: 15px;
-      padding: 14px 20px;
+      padding: 16px;
       border-radius: 14px;
-      margin-bottom: 12px;
-      transition: background 0.2s;
+      transition: opacity 0.2s;
     }
-    .btn:hover { background: #1D4ED8; }
-    .subtext { font-size: 12px; color: #6B7280; }
+    .btn:active {
+      opacity: 0.85;
+    }
+    .order-ref {
+      margin-top: 20px;
+      font-size: 11px;
+      color: #525252;
+      word-break: break-all;
+    }
+    .hint {
+      margin-top: 14px;
+      font-size: 12px;
+      color: #737373;
+    }
   </style>
 </head>
 <body>
   <div class="card">
-    <div class="badge" style="color: ${statusColor}; border-color: ${statusColor}; background: ${isSuccess ? 'rgba(16,185,129,0.15)' : (isPending ? 'rgba(245,158,11,0.15)' : 'rgba(239,68,68,0.15)')};">
-      ${statusIcon}
-    </div>
-    <h1>${statusTitle}</h1>
-    <p class="msg">${messageText}</p>
-    <div class="details">
-      <div class="row">
-        <span class="label">Reference:</span>
-        <span class="val">${bookingRef}</span>
-      </div>
-      ${amountStr ? `<div class="row"><span class="label">Amount:</span><span class="val">${amountStr}</span></div>` : ''}
-      <div class="row">
-        <span class="label">Status:</span>
-        <span class="val" style="color: ${statusColor};">${currentStatus}</span>
-      </div>
-    </div>
-    <a href="${deepLinkUrl}" class="btn" id="return-btn">Return to GONGO App</a>
-    <p class="subtext">If the app did not open automatically, tap the button above.</p>
+    <div class="logo">GONGO</div>
+    ${escBadgeText ? `<div class="badge">${escBadgeText}</div>` : ''}
+    <h1>${escTitle}</h1>
+    <p>${escMessage}</p>
+    <a href="${safeDeepLink}" class="btn" id="openAppBtn">Open GONGO App</a>
+    <div class="hint">Tap above if you are not automatically redirected.</div>
+    ${escOrderId ? `<div class="order-ref">Order: ${escOrderId}</div>` : ''}
   </div>
   <script>
     (function() {
-      var target = "${deepLinkUrl}";
-      try {
-        window.location.href = target;
-      } catch(e) {}
+      var deepLink = "${safeDeepLink}";
+      if (deepLink) {
+        setTimeout(function() {
+          window.location.href = deepLink;
+        }, 100);
+      }
     })();
   </script>
 </body>
 </html>`;
-
-      res.setHeader('Content-Type', 'text/html; charset=utf-8');
-      return res.status(HTTP_STATUS.OK).send(html);
-    } catch (err) {
-      return next(err);
-    }
   }
 }
 

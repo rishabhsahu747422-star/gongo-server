@@ -92,84 +92,90 @@ class CashfreeProvider extends PaymentProvider {
   }
 
   /**
-   * Resolves, substitutes, and cryptographically/syntactically validates the Cashfree return URL.
+   * Resolves and guarantees an absolute HTTPS return URL for Cashfree PG.
+   * Cashfree PG strictly rejects custom application schemes (e.g. gongo://).
    *
-   * Rules:
-   * 1. Cashfree PG API requires a valid HTTP or HTTPS URL (RFC 3986).
-   * 2. Custom app schemes (e.g. `gongo://`) or malformed combinations (`https://gongo://`) are strictly rejected.
-   * 3. Prevents caller override from injecting invalid deep-link schemes.
-   * 4. Substitutes `{order_id}` with encodeURIComponent(orderId) or appends `order_id=...`.
-   * 5. Preserves existing query parameters.
-   *
-   * @param {string} orderId - Cashfree order ID reference.
-   * @param {string} [callerReturnUrl] - Optional caller override.
-   * @returns {string} Fully validated HTTP/HTTPS return URL.
+   * @param {string} orderId
+   * @param {string} [callerOverride]
+   * @returns {string}
    */
-  resolveReturnUrl(orderId, callerReturnUrl) {
-    if (!orderId || typeof orderId !== 'string') {
-      throw new BadRequestError('orderId is required to resolve Cashfree return URL', PAYMENT_ERROR_CODES.PAYMENT_ORDER_CREATION_FAILED);
+  resolveReturnUrl(orderId, callerOverride) {
+    let candidate = (callerOverride !== undefined && callerOverride !== null && String(callerOverride).trim() !== ''
+      ? String(callerOverride)
+      : (this.returnUrl || '')).trim();
+
+    const backendBase = (process.env.BACKEND_PUBLIC_URL || env.BACKEND_PUBLIC_URL || 'https://gongo-server-myqf.onrender.com').replace(/\/+$/, '');
+    const canonicalFallback = `${backendBase}/api/v1/customer/payments/cashfree/return?order_id={order_id}`;
+
+    // Reject custom schemes (gongo://, https://gongo://, etc.) and fall back to configured or canonical URL
+    if (candidate.startsWith('gongo://') || candidate.startsWith('https://gongo://') || candidate.startsWith('http://gongo://')) {
+      logger.warn('[CASHFREE] Non-HTTPS return URL scheme rejected; falling back to canonical HTTPS return URL', {
+        orderId,
+        rejectedUrl: candidate,
+      });
+      candidate = (this.returnUrl && (this.returnUrl.startsWith('https://') || this.returnUrl.startsWith('http://')))
+        ? this.returnUrl
+        : canonicalFallback;
     }
 
-    let candidate = callerReturnUrl;
-    // Inspect caller override: ignore and log warning if it contains a custom deep link like gongo://
-    if (candidate && typeof candidate === 'string') {
-      const trimmed = candidate.trim();
-      if (trimmed.startsWith('gongo://') || trimmed.includes('gongo://') || !trimmed.match(/^https?:\/\//i)) {
-        logger.warn('Caller supplied invalid or custom-scheme returnUrl. Rejecting caller override and falling back to configured CASHFREE_RETURN_URL', {
-          callerReturnUrl: candidate,
-        });
-        candidate = null;
+    if (!candidate.startsWith('https://') && !candidate.startsWith('http://')) {
+      if (this.returnUrl && (this.returnUrl.startsWith('https://') || this.returnUrl.startsWith('http://'))) {
+        candidate = this.returnUrl;
+      } else {
+        throw new BadRequestError(
+          'Configured return URL must be a valid absolute HTTP or HTTPS URL',
+          PAYMENT_ERROR_CODES.INVALID_RETURN_URL,
+        );
       }
     }
 
-    if (!candidate) {
-      candidate = this.returnUrl !== undefined ? this.returnUrl : env.CASHFREE_RETURN_URL;
+    if (candidate.includes('{order_id}')) {
+      return candidate.replace('{order_id}', encodeURIComponent(orderId));
     }
 
-    if (!candidate || typeof candidate !== 'string' || !candidate.trim()) {
-      throw new BadRequestError(
-        'CASHFREE_RETURN_URL is not configured. A valid HTTP/HTTPS return URL is required.',
-        PAYMENT_ERROR_CODES.PAYMENT_ORDER_CREATION_FAILED,
-      );
+    const separator = candidate.includes('?') ? '&' : '?';
+    return `${candidate}${separator}order_id=${encodeURIComponent(orderId)}`;
+  }
+
+  /**
+   * Sanitizes and guarantees an absolute HTTPS return URL for Cashfree PG.
+   * Cashfree PG strictly rejects custom application schemes (e.g. gongo://).
+   *
+   * @param {string} rawUrl
+   * @param {string} orderId
+   * @returns {string}
+   */
+  sanitizeReturnUrl(rawUrl, orderId) {
+    let candidate = (rawUrl || '').trim();
+    const backendBase = (process.env.BACKEND_PUBLIC_URL || env.BACKEND_PUBLIC_URL || 'https://gongo-server-myqf.onrender.com').replace(/\/+$/, '');
+    const canonicalFallback = `${backendBase}/api/v1/payments/return?order_id={order_id}`;
+
+    // If empty or custom application scheme (e.g. gongo://, myapp://), replace with canonical backend HTTPS route
+    if (!candidate.startsWith('https://') && !candidate.startsWith('http://')) {
+      logger.warn('[CASHFREE] Non-HTTPS return URL scheme rejected; falling back to canonical HTTPS return URL', {
+        orderId,
+        rejectedUrl: candidate,
+        fallbackUrl: canonicalFallback,
+      });
+      candidate = canonicalFallback;
     }
 
-    const trimmed = candidate.trim();
+    return candidate.replace('{order_id}', encodeURIComponent(orderId));
+  }
 
-    // Check for malformed scheme combinations (e.g. "https://gongo://" or "gongo://")
-    if (trimmed.startsWith('gongo://') || trimmed.includes('gongo://') || !trimmed.match(/^https?:\/\//i)) {
-      throw new BadRequestError(
-        'Invalid CASHFREE_RETURN_URL: Must be a valid HTTP or HTTPS URL. Custom app schemes (such as gongo://) are rejected by Cashfree PG API.',
-        PAYMENT_ERROR_CODES.PAYMENT_ORDER_CREATION_FAILED,
-      );
+  /**
+   * Sanitizes and guarantees an absolute HTTPS notify URL for Cashfree webhooks.
+   *
+   * @param {string} rawUrl
+   * @returns {string}
+   */
+  sanitizeNotifyUrl(rawUrl) {
+    let candidate = (rawUrl || '').trim();
+    const backendBase = (process.env.BACKEND_PUBLIC_URL || env.BACKEND_PUBLIC_URL || 'https://gongo-server-myqf.onrender.com').replace(/\/+$/, '');
+    if (!candidate || (!candidate.startsWith('https://') && !candidate.startsWith('http://'))) {
+      return `${backendBase}/api/v1/payments/webhook/cashfree`;
     }
-
-    // Ensure valid URL structure
-    try {
-      const probeUrl = trimmed.replace('{order_id}', 'probe_order_id');
-      const parsed = new URL(probeUrl);
-      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-        throw new Error('Protocol must be http or https');
-      }
-      if (!parsed.hostname || parsed.hostname.includes('gongo:') || parsed.hostname.startsWith(':')) {
-        throw new Error('Invalid hostname in return URL');
-      }
-    } catch (urlErr) {
-      throw new BadRequestError(
-        `Invalid CASHFREE_RETURN_URL structure: ${urlErr.message}`,
-        PAYMENT_ERROR_CODES.PAYMENT_ORDER_CREATION_FAILED,
-      );
-    }
-
-    // Substitute {order_id} placeholder, or append order_id query parameter
-    let resolved;
-    if (trimmed.includes('{order_id}')) {
-      resolved = trimmed.replace('{order_id}', encodeURIComponent(orderId));
-    } else {
-      const sep = trimmed.includes('?') ? '&' : '?';
-      resolved = `${trimmed}${sep}order_id=${encodeURIComponent(orderId)}`;
-    }
-
-    return resolved;
+    return candidate;
   }
 
   /**
@@ -215,17 +221,17 @@ class CashfreeProvider extends PaymentProvider {
       });
     }
 
-    const resolvedReturnUrl = this.resolveReturnUrl(
-      orderId,
-      returnUrl || orderMeta?.returnUrl || orderMeta?.return_url,
-    );
+    const candidateReturnUrl = returnUrl || orderMeta?.returnUrl || orderMeta?.return_url || this.returnUrl || '';
+    const resolvedReturnUrl = this.sanitizeReturnUrl(candidateReturnUrl, orderId);
+
+    const candidateNotifyUrl = notifyUrl || orderMeta?.notifyUrl || orderMeta?.notify_url || process.env.CASHFREE_NOTIFY_URL;
+    const resolvedNotifyUrl = this.sanitizeNotifyUrl(candidateNotifyUrl);
 
     const meta = {
       return_url: resolvedReturnUrl,
     };
-    const candidateNotifyUrl = notifyUrl || orderMeta?.notifyUrl || orderMeta?.notify_url || process.env.CASHFREE_NOTIFY_URL || env.CASHFREE_NOTIFY_URL;
-    if (candidateNotifyUrl && typeof candidateNotifyUrl === 'string' && candidateNotifyUrl.trim().match(/^https?:\/\//i)) {
-      meta.notify_url = candidateNotifyUrl.trim();
+    if (resolvedNotifyUrl) {
+      meta.notify_url = resolvedNotifyUrl;
     }
 
     const payload = {

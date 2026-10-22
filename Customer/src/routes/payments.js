@@ -57,6 +57,17 @@ router.post(
 );
 
 /**
+ * @route   GET /api/v1/payments/return
+ * @route   POST /api/v1/payments/return
+ * @desc    Cashfree payment return handler.
+ *          Receives browser/webview redirect after checkout, verifies status authoritatively with Cashfree,
+ *          updates database transactionally, and renders a bridge page that deep-links back to the GONGO mobile app.
+ * @access  Public (Browser redirect from Cashfree PG)
+ */
+router.get('/return', (req, res, next) => paymentController.handlePaymentReturn(req, res, next));
+router.post('/return', (req, res, next) => paymentController.handlePaymentReturn(req, res, next));
+
+/**
  * @route   POST /api/v1/payments/test/simulate-webhook
  * @desc    Simulate verified Cashfree webhook in Sandbox test mode.
  * @access  Sandbox / Development only
