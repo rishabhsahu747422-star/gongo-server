@@ -84,11 +84,11 @@ class PaymentTimeoutService {
       await client.query('BEGIN');
 
       // Select bookings where:
-      // 1. Payment initiation exists (p.payment_type = 'BOOKING_ADVANCE') and was created before cutoff
-      // 2. Payment status is still initiated / pending
-      // 3. Booking is still in pre-confirmation / payment pending state
-      // 4. NO verified successful payment exists for this booking
-      // 5. Uses FOR UPDATE OF b, p SKIP LOCKED for concurrency safety
+      // 1. Payment deadline (b.payment_expires_at) has passed OR payment/booking creation was before cutoff
+      // 2. Booking is still in pre-confirmation / payment pending state
+      // 3. NO verified successful payment exists for this booking
+      // 4. Uses FOR UPDATE OF b SKIP LOCKED for multi-instance concurrency safety
+      const now = new Date();
       const query = `
         SELECT 
           b.id AS booking_id,
@@ -98,33 +98,48 @@ class PaymentTimeoutService {
           b.partner_id,
           b.vehicle_id,
           b.status AS booking_status,
+          b.created_at AS booking_created_at,
+          b.payment_expires_at,
           p.id AS payment_id,
           p.provider_order_id,
           p.amount,
           p.currency,
           p.status AS payment_status,
-          p.created_at AS payment_initiated_at
+          COALESCE(p.created_at, b.payment_initiated_at, b.created_at) AS payment_initiated_at
         FROM bookings b
-        JOIN payments p ON p.booking_id = b.id AND (p.payment_type = 'BOOKING_ADVANCE' OR p.payment_type IS NULL)
-        WHERE p.created_at <= $1
-          AND p.status IN ('initiated', 'pending', 'CREATED', 'PENDING')
-          AND b.status IN ('payment_pending', 'initiated', 'PAYMENT_PENDING', 'PENDING')
+        LEFT JOIN LATERAL (
+          SELECT p1.id, p1.provider_order_id, p1.amount, p1.currency, p1.status, p1.created_at
+          FROM payments p1
+          WHERE p1.booking_id = b.id AND (p1.payment_type = 'BOOKING_ADVANCE' OR p1.payment_type IS NULL)
+          ORDER BY p1.created_at DESC
+          LIMIT 1
+        ) p ON true
+        WHERE b.status IN ('payment_pending', 'initiated', 'PAYMENT_PENDING', 'PENDING')
+          AND (
+            p.created_at <= $1
+            OR (b.payment_expires_at IS NOT NULL AND b.payment_expires_at <= $2)
+            OR (p.created_at IS NULL AND COALESCE(b.payment_expires_at, b.created_at + interval '5 minutes') <= $2)
+          )
           AND NOT EXISTS (
             SELECT 1 FROM payments p2
             WHERE p2.booking_id = b.id
               AND p2.status IN ('paid', 'success', 'PAID', 'SUCCESS')
           )
-        ORDER BY p.created_at ASC
-        LIMIT $2
-        FOR UPDATE OF b, p SKIP LOCKED;
+        ORDER BY COALESCE(b.payment_expires_at, b.created_at) ASC
+        LIMIT $3
+        FOR UPDATE OF b SKIP LOCKED;
       `;
 
-      const { rows: eligibleCandidates } = await client.query(query, [cutoffTimestamp, batchSize]);
+      const { rows: eligibleCandidates } = await client.query(query, [cutoffTimestamp, now, batchSize]);
 
       for (const candidate of eligibleCandidates) {
         const candidateSavepoint = `sp_cand_${String(candidate.booking_id).replace(/-/g, '_').slice(0, 20)}`;
         try {
           await withSavepoint(client, candidateSavepoint, async () => {
+            if (candidate.payment_id) {
+              await client.query('SELECT id FROM payments WHERE id = $1 FOR UPDATE', [candidate.payment_id]).catch(() => {});
+            }
+
             // Re-check that no successful payment exists
             const successCheck = await client.query(
               `SELECT 1 FROM payments
@@ -255,14 +270,16 @@ class PaymentTimeoutService {
             const displayRef = candidate.booking_reference || candidate.booking_number || candidate.booking_id;
 
             // 1. Mark payment as FAILED with PAYMENT_TIMEOUT
-            await client.query(
-              `UPDATE payments
-               SET status = 'failed',
-                   failure_reason = $1,
-                   updated_at = CURRENT_TIMESTAMP
-               WHERE id = $2`,
-              [cancellationReason, candidate.payment_id],
-            );
+            if (candidate.payment_id) {
+              await client.query(
+                `UPDATE payments
+                 SET status = 'failed',
+                     failure_reason = $1,
+                     updated_at = CURRENT_TIMESTAMP
+                 WHERE id = $2`,
+                [cancellationReason, candidate.payment_id],
+              );
+            }
             try {
               await client.query(
                 `UPDATE payments
@@ -439,9 +456,9 @@ class PaymentTimeoutService {
   /**
    * Starts periodic background worker scheduler.
    *
-   * @param {number} [intervalMs=30000] Default: runs every 30 seconds
+   * @param {number} [intervalMs=15000] Default: runs every 15 seconds
    */
-  startScheduler(intervalMs = 30000) {
+  startScheduler(intervalMs = 15000) {
     if (this.timer) {
       return;
     }

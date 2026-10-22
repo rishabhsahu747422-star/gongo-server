@@ -3,6 +3,7 @@
 const adminPartnerService = require('../services/admin-partner.service');
 const { getClientIp } = require('../middlewares/rateLimiter');
 const { sendSuccess } = require('../utils/response');
+const logger = require('../config/logger');
 
 class AdminPartnerController {
   /**
@@ -64,8 +65,15 @@ class AdminPartnerController {
     try {
       const auditCtx = this._buildAuditContext(req, res, 'partners.verify');
       const data = await adminPartnerService.approvePartner(req.params.id, req.body, auditCtx);
-      return sendSuccess(res, data);
+      return sendSuccess(res, data, 'Partner verification approved successfully');
     } catch (err) {
+      logger.error('Admin partner approvePartner controller failure', {
+        operation: 'approvePartner',
+        partnerId: req.params?.id,
+        requestId: req.id || (res.locals && res.locals.requestId) || null,
+        errorCode: err.code || err.statusCode || 'UNKNOWN_ERROR',
+        error: err.message,
+      });
       return next(err);
     }
   }
@@ -77,8 +85,15 @@ class AdminPartnerController {
     try {
       const auditCtx = this._buildAuditContext(req, res, 'partners.verify');
       const data = await adminPartnerService.rejectPartner(req.params.id, req.body, auditCtx);
-      return sendSuccess(res, data);
+      return sendSuccess(res, data, 'Partner verification rejected successfully');
     } catch (err) {
+      logger.error('Admin partner rejectPartner controller failure', {
+        operation: 'rejectPartner',
+        partnerId: req.params?.id,
+        requestId: req.id || (res.locals && res.locals.requestId) || null,
+        errorCode: err.code || err.statusCode || 'UNKNOWN_ERROR',
+        error: err.message,
+      });
       return next(err);
     }
   }

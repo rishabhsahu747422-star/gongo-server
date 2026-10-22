@@ -650,22 +650,58 @@ class AdminPartnerRepository extends BaseRepository {
    * @param {import('pg').PoolClient} [client]
    * @returns {Promise<object>}
    */
-  async updateKycStatus(partnerId, kycStatus, client = null) {
+  async updateKycStatus(partnerId, kycStatus, client = null, metadata = {}) {
     if (mockPartnerResolver && mockPartnerResolver.updateKycStatus) {
-      return mockPartnerResolver.updateKycStatus(partnerId, kycStatus);
+      return mockPartnerResolver.updateKycStatus(partnerId, kycStatus, client, metadata);
     }
 
     const executor = this._getExecutor(client);
-    await executor(
-      `UPDATE partners 
-       SET kyc_status = $2, 
-           verification_status = CASE WHEN $2 IN ('VERIFIED', 'APPROVED') THEN 'VERIFIED' ELSE verification_status END,
-           status = CASE WHEN $2 IN ('VERIFIED', 'APPROVED') AND status = 'pending' THEN 'active' ELSE status END,
-           is_active = true,
-           updated_at = CURRENT_TIMESTAMP 
-       WHERE id = $1`,
-      [partnerId, kycStatus],
-    );
+    const upperKyc = String(kycStatus).toUpperCase().trim();
+    const isApprove = (upperKyc === 'VERIFIED' || upperKyc === 'APPROVED');
+    const reason = metadata.reason || null;
+
+    if (isApprove) {
+      await executor(
+        `UPDATE partners 
+         SET kyc_status = 'VERIFIED', 
+             verification_status = 'VERIFIED',
+             status = CASE WHEN status = 'pending' THEN 'active' ELSE status END,
+             verified_at = CURRENT_TIMESTAMP,
+             updated_at = CURRENT_TIMESTAMP 
+         WHERE id = $1`,
+        [partnerId],
+      );
+
+      await executor(
+        `UPDATE partner_documents
+         SET verification_status = 'VERIFIED',
+             verified_at = CURRENT_TIMESTAMP,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE partner_id = $1 AND verification_status IN ('PENDING', 'UNDER_REVIEW')`,
+        [partnerId],
+      );
+    } else {
+      await executor(
+        `UPDATE partners 
+         SET kyc_status = 'REJECTED', 
+             verification_status = 'REJECTED',
+             status = CASE WHEN status = 'pending' THEN 'rejected' ELSE status END,
+             partner_status = 'OFFLINE',
+             verified_at = NULL,
+             updated_at = CURRENT_TIMESTAMP 
+         WHERE id = $1`,
+        [partnerId],
+      );
+
+      await executor(
+        `UPDATE partner_documents
+         SET verification_status = 'REJECTED',
+             rejection_reason = COALESCE($2, rejection_reason, 'Verification rejected by administrator'),
+             updated_at = CURRENT_TIMESTAMP
+         WHERE partner_id = $1 AND verification_status IN ('PENDING', 'UNDER_REVIEW')`,
+        [partnerId, reason],
+      );
+    }
 
     return this.findPartnerById(partnerId, client);
   }

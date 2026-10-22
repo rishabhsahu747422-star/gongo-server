@@ -297,8 +297,12 @@ const env = cleanEnv(process.env, {
     docs: 'Cashfree PG API version (Production 2025-01-01).',
   }),
   CASHFREE_RETURN_URL: str({
-    default: 'https://app.gongo.in/bookings/{order_id}/payment-status',
+    default: 'https://gongo-server-myqf.onrender.com/api/v1/customer/payments/cashfree/return?order_id={order_id}',
     docs: 'Frontend return URL for customer post-payment redirect.',
+  }),
+  CASHFREE_NOTIFY_URL: str({
+    default: 'https://gongo-server-myqf.onrender.com/api/v1/payments/webhook/cashfree',
+    docs: 'Webhook endpoint URL for Cashfree payment status events.',
   }),
 
   // ── Development Auth Tokens (dev-token-<phone>) ──────────────

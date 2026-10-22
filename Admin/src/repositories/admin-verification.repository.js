@@ -104,8 +104,8 @@ class AdminVerificationRepository extends BaseRepository {
         LOWER(p.verification_status) != 'verified'
       )`);
     } else if (kycStatus && kycStatus !== 'ALL') {
-      conditions.push(`p.kyc_status = $${idx}`);
-      values.push(kycStatus);
+      conditions.push(`UPPER(p.kyc_status) = $${idx}`);
+      values.push(kycStatus.toUpperCase());
       idx += 1;
     }
 
@@ -136,27 +136,47 @@ class AdminVerificationRepository extends BaseRepository {
     const sql = `
       SELECT
         p.id,
+        p.partner_code,
+        p.partner_reference,
         p.user_id,
         p.business_name,
         p.business_type,
         p.city,
+        p.status,
+        p.partner_status,
         p.kyc_status,
+        p.verification_status,
         p.is_active,
+        p.verified_at,
         p.created_at,
         p.updated_at,
         u.name AS owner_name,
         u.email AS owner_email,
         u.phone AS owner_phone,
+        ba.bank_name,
+        ba.account_number_masked,
+        ba.ifsc_code,
+        ba.account_holder_name,
         COUNT(pd.id)::int AS total_documents,
-        COUNT(pd.id) FILTER (WHERE pd.verification_status = 'VERIFIED')::int AS verified_documents,
-        COUNT(pd.id) FILTER (WHERE pd.verification_status = 'PENDING')::int AS pending_documents,
-        COUNT(pd.id) FILTER (WHERE pd.verification_status = 'REJECTED')::int AS rejected_documents,
+        COUNT(pd.id) FILTER (WHERE UPPER(pd.verification_status) = 'VERIFIED')::int AS verified_documents,
+        COUNT(pd.id) FILTER (WHERE UPPER(pd.verification_status) = 'PENDING')::int AS pending_documents,
+        COUNT(pd.id) FILTER (WHERE UPPER(pd.verification_status) = 'REJECTED')::int AS rejected_documents,
         COUNT(*) OVER()::int AS full_count
       FROM partners p
       JOIN users u ON u.id = p.user_id
       LEFT JOIN partner_documents pd ON pd.partner_id = p.id
+      LEFT JOIN (
+        SELECT DISTINCT ON (partner_id)
+          partner_id,
+          bank_name,
+          account_number_masked,
+          ifsc_code,
+          account_holder_name
+        FROM partner_bank_accounts
+        ORDER BY partner_id, is_primary DESC, created_at DESC
+      ) ba ON ba.partner_id = p.id
       ${whereClause}
-      GROUP BY p.id, u.id
+      GROUP BY p.id, u.id, ba.bank_name, ba.account_number_masked, ba.ifsc_code, ba.account_holder_name
       ORDER BY p.${safeSortCol} ${safeSortDir}, p.id DESC
       LIMIT $${idx} OFFSET $${idx + 1};
     `;
@@ -167,17 +187,31 @@ class AdminVerificationRepository extends BaseRepository {
     const total = res.rows[0] ? res.rows[0].full_count : 0;
     const partners = res.rows.map((r) => ({
       id: r.id,
+      partnerId: r.id,
+      partnerReference: r.partner_reference || r.partner_code || null,
+      partnerCode: r.partner_code || r.partner_reference || null,
       userId: r.user_id,
       businessName: r.business_name,
       businessType: r.business_type,
       city: r.city,
+      status: r.status ? String(r.status).toLowerCase() : (r.is_active ? 'active' : 'suspended'),
+      partnerStatus: r.partner_status,
       kycStatus: r.kyc_status,
+      verificationStatus: r.verification_status || r.kyc_status,
+      verifiedAt: r.verified_at,
       isActive: r.is_active,
       owner: {
         name: r.owner_name,
         email: r.owner_email,
         phone: r.owner_phone,
       },
+      bankAccount: r.bank_name || r.account_number_masked ? {
+        bankName: r.bank_name || '',
+        accountNumber: r.account_number_masked || '',
+        accountNumberMasked: r.account_number_masked || '',
+        ifsc: r.ifsc_code || '',
+        accountHolder: r.account_holder_name || '',
+      } : null,
       documentCounts: {
         total: r.total_documents,
         verified: r.verified_documents,
@@ -207,13 +241,19 @@ class AdminVerificationRepository extends BaseRepository {
     const partnerSql = `
       SELECT
         p.id,
+        p.partner_code,
+        p.partner_reference,
         p.user_id,
         p.business_name,
         p.business_type,
         p.city,
         p.business_address,
+        p.status,
+        p.partner_status,
         p.kyc_status,
+        p.verification_status,
         p.is_active,
+        p.verified_at,
         p.created_at,
         p.updated_at,
         u.name AS owner_name,
@@ -242,9 +282,27 @@ class AdminVerificationRepository extends BaseRepository {
       ORDER BY created_at DESC, id DESC;
     `;
 
-    const [pRes, dRes] = await Promise.all([
+    const bankSql = `
+      SELECT
+        id,
+        partner_id,
+        account_holder_name,
+        account_number_masked,
+        ifsc_code,
+        bank_name,
+        is_primary,
+        verification_status,
+        created_at
+      FROM partner_bank_accounts
+      WHERE partner_id = $1
+      ORDER BY is_primary DESC, created_at DESC
+      LIMIT 1;
+    `;
+
+    const [pRes, dRes, bRes] = await Promise.all([
       executor(partnerSql, [partnerId]),
       executor(docSql, [partnerId]),
+      executor(bankSql, [partnerId]).catch(() => ({ rows: [] })),
     ]);
 
     if (!pRes.rows[0]) return null;
@@ -263,8 +321,24 @@ class AdminVerificationRepository extends BaseRepository {
       updatedAt: d.updated_at,
     }));
 
+    const bank = (bRes && bRes.rows && bRes.rows[0]) ? {
+      id: bRes.rows[0].id,
+      bankName: bRes.rows[0].bank_name,
+      accountHolder: bRes.rows[0].account_holder_name,
+      accountHolderName: bRes.rows[0].account_holder_name,
+      accountNumber: bRes.rows[0].account_number_masked,
+      accountNumberMasked: bRes.rows[0].account_number_masked,
+      ifsc: bRes.rows[0].ifsc_code,
+      ifscCode: bRes.rows[0].ifsc_code,
+      isPrimary: bRes.rows[0].is_primary,
+      verificationStatus: bRes.rows[0].verification_status,
+    } : null;
+
     return {
       id: p.id,
+      partnerId: p.id,
+      partnerReference: p.partner_reference || p.partner_code || null,
+      partnerCode: p.partner_code || p.partner_reference || null,
       userId: p.user_id,
       businessName: p.business_name,
       businessType: p.business_type,
@@ -272,13 +346,18 @@ class AdminVerificationRepository extends BaseRepository {
       businessAddress: p.business_address || null,
       state: null,
       pincode: null,
+      status: p.status ? String(p.status).toLowerCase() : (p.is_active ? 'active' : 'suspended'),
+      partnerStatus: p.partner_status,
       kycStatus: p.kyc_status,
+      verificationStatus: p.verification_status || p.kyc_status,
+      verifiedAt: p.verified_at,
       isActive: p.is_active,
       owner: {
         name: p.owner_name,
         email: p.owner_email,
         phone: p.owner_phone,
       },
+      bankAccount: bank,
       documents,
       createdAt: p.created_at,
       updatedAt: p.updated_at,
@@ -298,7 +377,7 @@ class AdminVerificationRepository extends BaseRepository {
     }
 
     const sql = `
-      SELECT id, user_id, business_name, kyc_status, is_active, created_at, updated_at
+      SELECT id, user_id, business_name, status, partner_status, kyc_status, verification_status, is_active, verified_at, created_at, updated_at
       FROM partners
       WHERE id = $1
       FOR UPDATE;
@@ -311,7 +390,11 @@ class AdminVerificationRepository extends BaseRepository {
       id: r.id,
       userId: r.user_id,
       businessName: r.business_name,
+      status: r.status,
+      partnerStatus: r.partner_status,
       kycStatus: r.kyc_status,
+      verificationStatus: r.verification_status,
+      verifiedAt: r.verified_at,
       isActive: r.is_active,
       createdAt: r.created_at,
       updatedAt: r.updated_at,
@@ -319,29 +402,101 @@ class AdminVerificationRepository extends BaseRepository {
   }
 
   /**
-   * Updates partner KYC status.
+   * Updates partner KYC status and cascades verification/rejection to documents and audit history.
    *
    * @param {string} partnerId
    * @param {string} kycStatus
    * @param {import('pg').PoolClient} client
+   * @param {object} [metadata]
    * @returns {Promise<object>}
    */
-  async updatePartnerKycStatus(partnerId, kycStatus, client) {
+  async updatePartnerKycStatus(partnerId, kycStatus, client, metadata = {}) {
     if (mockVerificationResolver && mockVerificationResolver.updatePartnerKycStatus) {
-      return mockVerificationResolver.updatePartnerKycStatus(partnerId, kycStatus);
+      return mockVerificationResolver.updatePartnerKycStatus(partnerId, kycStatus, client, metadata);
     }
 
-    const sql = `
-      UPDATE partners
-      SET kyc_status = $2,
-          verification_status = CASE WHEN $2 IN ('VERIFIED', 'APPROVED') THEN 'VERIFIED' ELSE verification_status END,
-          status = CASE WHEN $2 IN ('VERIFIED', 'APPROVED') AND status = 'pending' THEN 'active' ELSE status END,
-          is_active = true,
-          updated_at = CURRENT_TIMESTAMP
-      WHERE id = $1
-      RETURNING *;
-    `;
-    await client.query(sql, [partnerId, kycStatus]);
+    const executor = this._getExecutor(client);
+    const upperKyc = String(kycStatus).toUpperCase().trim();
+    const isApprove = (upperKyc === 'VERIFIED' || upperKyc === 'APPROVED');
+    const finalKycStatus = isApprove ? 'VERIFIED' : 'REJECTED';
+    const finalVerificationStatus = isApprove ? 'VERIFIED' : 'REJECTED';
+    const reason = metadata.reason || null;
+    const verifiedBy = metadata.verifiedBy || null;
+
+    if (isApprove) {
+      // 1. Update partners table
+      // Preserve existing suspension (do NOT unsuspend if suspended or inactive)
+      // Only advance 'pending' status to 'active'
+      const partnerSql = `
+        UPDATE partners
+        SET kyc_status = 'VERIFIED',
+            verification_status = 'VERIFIED',
+            status = CASE WHEN status = 'pending' THEN 'active' ELSE status END,
+            verified_at = CURRENT_TIMESTAMP,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = $1
+        RETURNING *;
+      `;
+      await executor(partnerSql, [partnerId]);
+
+      // 2. Cascade verification to pending partner documents
+      const docsSql = `
+        UPDATE partner_documents
+        SET verification_status = 'VERIFIED',
+            verified_at = CURRENT_TIMESTAMP,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE partner_id = $1 AND verification_status IN ('PENDING', 'UNDER_REVIEW');
+      `;
+      await executor(docsSql, [partnerId]);
+    } else {
+      // 1. Update partners table
+      // If status was 'pending', set to 'rejected'
+      // Set operational status to 'OFFLINE' so unverified partner cannot receive bookings
+      // Clear verified_at
+      const partnerSql = `
+        UPDATE partners
+        SET kyc_status = 'REJECTED',
+            verification_status = 'REJECTED',
+            status = CASE WHEN status = 'pending' THEN 'rejected' ELSE status END,
+            partner_status = 'OFFLINE',
+            verified_at = NULL,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = $1
+        RETURNING *;
+      `;
+      await executor(partnerSql, [partnerId]);
+
+      // 2. Cascade rejection to partner documents with rejection reason
+      const docsSql = `
+        UPDATE partner_documents
+        SET verification_status = 'REJECTED',
+            rejection_reason = COALESCE($2, rejection_reason, 'Verification rejected by administrator'),
+            updated_at = CURRENT_TIMESTAMP
+        WHERE partner_id = $1 AND verification_status IN ('PENDING', 'UNDER_REVIEW');
+      `;
+      await executor(docsSql, [partnerId, reason]);
+    }
+
+    // 3. Record in partner_verification_history
+    const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    const safeVerifiedBy = (typeof verifiedBy === 'string' && UUID_REGEX.test(verifiedBy.trim())) ? verifiedBy.trim() : null;
+    try {
+      await executor(`
+        INSERT INTO partner_verification_history (
+          partner_id, verification_type, old_status, new_status, reason, verified_by, created_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP);
+      `, [
+        partnerId,
+        'KYC',
+        metadata.previousStatus || null,
+        finalKycStatus,
+        reason,
+        safeVerifiedBy,
+      ]);
+    } catch (_) {
+      // Tolerant in environments without history table
+    }
+
     return this.findPartnerVerificationById(partnerId, client);
   }
 

@@ -664,7 +664,23 @@ class BookingService {
       }
     }
 
-    const statusUpper = String(booking.bookingStatus || booking.status || '').toUpperCase();
+    let statusUpper = String(booking.bookingStatus || booking.status || '').toUpperCase();
+    if (statusUpper === 'PENDING' || statusUpper === 'PAYMENT_PENDING') {
+      try {
+        const paymentService = require('./payment.service');
+        const paymentStatus = await paymentService.getPaymentStatus(customerId, booking.id);
+        if (paymentStatus && (paymentStatus.isPaid || paymentStatus.status === 'PAID' || paymentStatus.status === 'SUCCESS')) {
+          const fresh = await this.bookingRepository.findByIdAndCustomerId(bookingId, customerId);
+          if (fresh) {
+            Object.assign(booking, fresh);
+            statusUpper = String(booking.bookingStatus || booking.status || '').toUpperCase();
+          }
+        }
+      } catch {
+        // Non-fatal: If provider is unreachable, proceed safely with current database record
+      }
+    }
+
     const isUpcoming = ['PENDING', 'ACCEPTED', 'PAYMENT_PENDING', 'PAYMENT_COMPLETED', 'CONFIRMED', 'UPCOMING', 'PICKUP_SCHEDULED'].includes(statusUpper);
     if (isUpcoming && !booking.pickupOtp) {
       try {

@@ -34,14 +34,14 @@ async function withSavepoint(client, name, fn) {
     if (hasSavepoint) {
       try {
         await client.query(`RELEASE SAVEPOINT ${name}`);
-      } catch (_) {}
+      } catch (_) { }
     }
     return result;
   } catch (err) {
     if (hasSavepoint) {
       try {
         await client.query(`ROLLBACK TO SAVEPOINT ${name}`);
-      } catch (_) {}
+      } catch (_) { }
     }
     throw err;
   }
@@ -540,7 +540,7 @@ class CancellationService {
           const pOrderRes = await client.query(
             `SELECT provider_order_id FROM payments
              WHERE booking_id = $1 AND provider_order_id IS NOT NULL
-             ORDER BY created_at DESC LIMIT 1`,
+             ORDER BY COALESCE(created_at, CURRENT_TIMESTAMP) DESC, id DESC LIMIT 1`,
             [bookingId],
           );
           if (pOrderRes.rows[0]?.provider_order_id) {
@@ -551,9 +551,10 @@ class CancellationService {
         }
       }
 
-      if (providerOrderId && this.provider && typeof this.provider.getOrderStatus === 'function') {
+      const effectiveProvider = this.provider || require('./payment/providers/cashfree.provider');
+      if (providerOrderId && effectiveProvider && typeof effectiveProvider.getOrderStatus === 'function') {
         try {
-          const providerStatus = await this.provider.getOrderStatus(providerOrderId, {
+          const providerStatus = await effectiveProvider.getOrderStatus(providerOrderId, {
             bookingId: booking.id,
           });
           if (providerStatus && (providerStatus.orderStatus === 'PAID' || providerStatus.orderStatus === 'SUCCESS')) {
@@ -620,7 +621,7 @@ class CancellationService {
           [cancelReason, bookingId],
         ));
         updatedBooking = true;
-      } catch (_) {}
+      } catch (_) { }
 
       if (!updatedBooking) {
         try {
@@ -642,7 +643,7 @@ class CancellationService {
               [bookingId],
             ));
             updatedBooking = true;
-          } catch (_) {}
+          } catch (_) { }
         }
       }
 
@@ -654,7 +655,7 @@ class CancellationService {
            WHERE id = $1`,
           [bookingId],
         ));
-      } catch (_) {}
+      } catch (_) { }
 
       // 6b. Update payments table: mark pending/initiated advance payments as failed/declined
       try {
@@ -752,7 +753,7 @@ class CancellationService {
                ) VALUES ($1, $2, $3, CURRENT_TIMESTAMP)`,
               [bookingId, customerId, cancelReason],
             ));
-          } catch (_) {}
+          } catch (_) { }
         }
       }
 

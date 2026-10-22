@@ -20,7 +20,7 @@ class CashfreeProvider extends PaymentProvider {
     this.secretKey = options.secretKey || env.CASHFREE_SECRET_KEY;
     this.envMode = (options.env || env.CASHFREE_ENV || 'SANDBOX').toUpperCase();
     this.apiVersion = options.apiVersion || env.CASHFREE_API_VERSION || '2025-01-01';
-    this.returnUrl = options.returnUrl || env.CASHFREE_RETURN_URL;
+    this.returnUrl = options.returnUrl !== undefined ? options.returnUrl : env.CASHFREE_RETURN_URL;
 
     this.baseUrl = this.envMode === 'PRODUCTION'
       ? 'https://api.cashfree.com/pg'
@@ -92,6 +92,87 @@ class CashfreeProvider extends PaymentProvider {
   }
 
   /**
+   * Resolves, substitutes, and cryptographically/syntactically validates the Cashfree return URL.
+   *
+   * Rules:
+   * 1. Cashfree PG API requires a valid HTTP or HTTPS URL (RFC 3986).
+   * 2. Custom app schemes (e.g. `gongo://`) or malformed combinations (`https://gongo://`) are strictly rejected.
+   * 3. Prevents caller override from injecting invalid deep-link schemes.
+   * 4. Substitutes `{order_id}` with encodeURIComponent(orderId) or appends `order_id=...`.
+   * 5. Preserves existing query parameters.
+   *
+   * @param {string} orderId - Cashfree order ID reference.
+   * @param {string} [callerReturnUrl] - Optional caller override.
+   * @returns {string} Fully validated HTTP/HTTPS return URL.
+   */
+  resolveReturnUrl(orderId, callerReturnUrl) {
+    if (!orderId || typeof orderId !== 'string') {
+      throw new BadRequestError('orderId is required to resolve Cashfree return URL', PAYMENT_ERROR_CODES.PAYMENT_ORDER_CREATION_FAILED);
+    }
+
+    let candidate = callerReturnUrl;
+    // Inspect caller override: ignore and log warning if it contains a custom deep link like gongo://
+    if (candidate && typeof candidate === 'string') {
+      const trimmed = candidate.trim();
+      if (trimmed.startsWith('gongo://') || trimmed.includes('gongo://') || !trimmed.match(/^https?:\/\//i)) {
+        logger.warn('Caller supplied invalid or custom-scheme returnUrl. Rejecting caller override and falling back to configured CASHFREE_RETURN_URL', {
+          callerReturnUrl: candidate,
+        });
+        candidate = null;
+      }
+    }
+
+    if (!candidate) {
+      candidate = this.returnUrl !== undefined ? this.returnUrl : env.CASHFREE_RETURN_URL;
+    }
+
+    if (!candidate || typeof candidate !== 'string' || !candidate.trim()) {
+      throw new BadRequestError(
+        'CASHFREE_RETURN_URL is not configured. A valid HTTP/HTTPS return URL is required.',
+        PAYMENT_ERROR_CODES.PAYMENT_ORDER_CREATION_FAILED,
+      );
+    }
+
+    const trimmed = candidate.trim();
+
+    // Check for malformed scheme combinations (e.g. "https://gongo://" or "gongo://")
+    if (trimmed.startsWith('gongo://') || trimmed.includes('gongo://') || !trimmed.match(/^https?:\/\//i)) {
+      throw new BadRequestError(
+        'Invalid CASHFREE_RETURN_URL: Must be a valid HTTP or HTTPS URL. Custom app schemes (such as gongo://) are rejected by Cashfree PG API.',
+        PAYMENT_ERROR_CODES.PAYMENT_ORDER_CREATION_FAILED,
+      );
+    }
+
+    // Ensure valid URL structure
+    try {
+      const probeUrl = trimmed.replace('{order_id}', 'probe_order_id');
+      const parsed = new URL(probeUrl);
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        throw new Error('Protocol must be http or https');
+      }
+      if (!parsed.hostname || parsed.hostname.includes('gongo:') || parsed.hostname.startsWith(':')) {
+        throw new Error('Invalid hostname in return URL');
+      }
+    } catch (urlErr) {
+      throw new BadRequestError(
+        `Invalid CASHFREE_RETURN_URL structure: ${urlErr.message}`,
+        PAYMENT_ERROR_CODES.PAYMENT_ORDER_CREATION_FAILED,
+      );
+    }
+
+    // Substitute {order_id} placeholder, or append order_id query parameter
+    let resolved;
+    if (trimmed.includes('{order_id}')) {
+      resolved = trimmed.replace('{order_id}', encodeURIComponent(orderId));
+    } else {
+      const sep = trimmed.includes('?') ? '&' : '?';
+      resolved = `${trimmed}${sep}order_id=${encodeURIComponent(orderId)}`;
+    }
+
+    return resolved;
+  }
+
+  /**
    * Initiates a payment order on Cashfree.
    *
    * @param {object} params
@@ -134,15 +215,17 @@ class CashfreeProvider extends PaymentProvider {
       });
     }
 
-    const resolvedReturnUrl = (returnUrl || orderMeta?.returnUrl || orderMeta?.return_url || this.returnUrl || '')
-      .replace('{order_id}', encodeURIComponent(orderId));
+    const resolvedReturnUrl = this.resolveReturnUrl(
+      orderId,
+      returnUrl || orderMeta?.returnUrl || orderMeta?.return_url,
+    );
 
     const meta = {
       return_url: resolvedReturnUrl,
     };
-    const resolvedNotifyUrl = notifyUrl || orderMeta?.notifyUrl || orderMeta?.notify_url || process.env.CASHFREE_NOTIFY_URL;
-    if (resolvedNotifyUrl) {
-      meta.notify_url = resolvedNotifyUrl;
+    const candidateNotifyUrl = notifyUrl || orderMeta?.notifyUrl || orderMeta?.notify_url || process.env.CASHFREE_NOTIFY_URL || env.CASHFREE_NOTIFY_URL;
+    if (candidateNotifyUrl && typeof candidateNotifyUrl === 'string' && candidateNotifyUrl.trim().match(/^https?:\/\//i)) {
+      meta.notify_url = candidateNotifyUrl.trim();
     }
 
     const payload = {
@@ -390,6 +473,115 @@ class CashfreeProvider extends PaymentProvider {
     }
 
     return crypto.timingSafeEqual(sigBuf, expectedBuf);
+  }
+
+  /**
+   * Initiates a refund on Cashfree for a previously paid order.
+   *
+   * @param {object} params
+   * @param {string} params.orderId - Provider order ID
+   * @param {number} params.refundAmount - Refund amount in INR
+   * @param {string} params.refundId - Unique refund reference ID
+   * @param {string} [params.refundNote] - Reason / note for refund
+   * @returns {Promise<{providerRefundId: string, refundStatus: string, refundAmount: number}>}
+   */
+  async createRefund({ orderId, refundAmount, refundId, refundNote }) {
+    if (this.mockDelegate && typeof this.mockDelegate.createRefund === 'function') {
+      return this.mockDelegate.createRefund({ orderId, refundAmount, refundId, refundNote });
+    }
+
+    const payload = {
+      refund_amount: Number(refundAmount),
+      refund_id: refundId,
+      refund_note: refundNote || 'GONGO Customer Booking Refund',
+    };
+
+    try {
+      const response = await fetch(
+        `${this.baseUrl}/orders/${encodeURIComponent(orderId)}/refunds`,
+        {
+          method: 'POST',
+          headers: this._getHeaders(),
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(15000),
+        },
+      );
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        logger.error('Cashfree refund creation failed', {
+          status: response.status,
+          orderId,
+          refundId,
+          message: data.message,
+        });
+        throw new BadRequestError(
+          data.message || 'Payment provider rejected refund request',
+        );
+      }
+
+      const providerRefundId = data.cf_refund_id
+        ? String(data.cf_refund_id)
+        : (data.refund_id || refundId);
+
+      return {
+        providerRefundId,
+        cfRefundId: data.cf_refund_id ? String(data.cf_refund_id) : undefined,
+        refundId: data.refund_id || refundId,
+        refundStatus: data.refund_status || 'SUCCESS',
+        refundAmount: data.refund_amount ? Number(data.refund_amount) : Number(refundAmount),
+      };
+    } catch (err) {
+      if (err instanceof BadRequestError) throw err;
+      logger.error('Cashfree connection error during createRefund', {
+        orderId,
+        refundId,
+        error: err.message,
+      });
+      throw new ServiceUnavailableError('Payment gateway temporarily unreachable');
+    }
+  }
+
+  /**
+   * Fetches status of a refund from Cashfree.
+   *
+   * @param {string} orderId
+   * @param {string} refundId
+   * @returns {Promise<object>}
+   */
+  async getRefundStatus(orderId, refundId) {
+    if (this.mockDelegate && typeof this.mockDelegate.getRefundStatus === 'function') {
+      return this.mockDelegate.getRefundStatus(orderId, refundId);
+    }
+
+    try {
+      const response = await fetch(
+        `${this.baseUrl}/orders/${encodeURIComponent(orderId)}/refunds/${encodeURIComponent(refundId)}`,
+        {
+          method: 'GET',
+          headers: this._getHeaders(),
+          signal: AbortSignal.timeout(10000),
+        },
+      );
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new BadRequestError(data.message || 'Failed to retrieve refund status from Cashfree');
+      }
+
+      return {
+        providerRefundId: data.cf_refund_id ? String(data.cf_refund_id) : data.refund_id,
+        cfRefundId: data.cf_refund_id ? String(data.cf_refund_id) : undefined,
+        refundId: data.refund_id || refundId,
+        refundStatus: data.refund_status,
+        refundAmount: data.refund_amount ? Number(data.refund_amount) : null,
+      };
+    } catch (err) {
+      if (err instanceof BadRequestError) throw err;
+      throw new ServiceUnavailableError('Payment gateway temporarily unreachable');
+    }
   }
 }
 

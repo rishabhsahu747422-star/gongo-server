@@ -211,6 +211,38 @@ class PaymentService {
           throw new BadRequestError('Booking has already been paid', PAYMENT_ERROR_CODES.PAYMENT_ALREADY_COMPLETED);
         }
 
+        // Auto-reconciliation: Verify whether customer already paid the previous Cashfree order before generating a new session
+        if (existingPayment.providerOrderId && this.provider && typeof this.provider.getOrderStatus === 'function') {
+          try {
+            const remoteOrder = await this.provider.getOrderStatus(existingPayment.providerOrderId, {
+              bookingId: booking.id,
+              paymentId: existingPayment.id,
+            });
+            if (remoteOrder && (remoteOrder.orderStatus === 'PAID' || remoteOrder.orderStatus === 'SUCCESS')) {
+              logger.info('Previous payment already completed on Cashfree; reconciling and confirming booking', {
+                bookingId: booking.id,
+                providerOrderId: existingPayment.providerOrderId,
+              });
+              await this.paymentRepository.transaction(async (client) => {
+                const lockedPayment = await this.paymentRepository.lockByProviderOrderId(
+                  existingPayment.providerOrderId,
+                  client,
+                );
+                if (lockedPayment) {
+                  await this._applyPaymentSuccess(client, lockedPayment, {
+                    providerOrderId: existingPayment.providerOrderId,
+                    paymentMethod: 'ONLINE',
+                  });
+                }
+              });
+              throw new BadRequestError('Booking has already been paid', PAYMENT_ERROR_CODES.PAYMENT_ALREADY_COMPLETED);
+            }
+          } catch (checkErr) {
+            if (checkErr instanceof BadRequestError) throw checkErr;
+            // Transient check error: proceed safely with local lifecycle
+          }
+        }
+
         // Cashfree payment sessions expire in 15-20 minutes.
         // If the session is older than 12 minutes (720,000 ms), expire the stale payment order and generate a fresh Cashfree session.
         const paymentCreatedAt = existingPayment.createdAt ? new Date(existingPayment.createdAt).getTime() : 0;
@@ -244,13 +276,15 @@ class PaymentService {
       }
 
       // 5. Authoritative server amount from pricingSnapshot (excluding separate pickup security deposit)
-      const depositAmount = Number(booking.pricingSnapshot.securityDeposit || 0);
-      const fullAmount = Number(booking.pricingSnapshot.totalAmount);
-      const onlineAmount = booking.pricingSnapshot.payableAmount !== undefined
+      const depositAmount = Number(booking.pricingSnapshot?.securityDeposit || booking.securityDeposit || 0);
+      const fullAmount = Number(booking.pricingSnapshot?.totalAmount || booking.totalAmount || 0);
+      const onlineAmount = booking.pricingSnapshot?.payableAmount !== undefined
         ? Number(booking.pricingSnapshot.payableAmount)
-        : (booking.pricingSnapshot.subtotal !== undefined
-          ? Number(booking.pricingSnapshot.subtotal)
-          : Math.max(0, fullAmount - depositAmount));
+        : (booking.payableAmount !== undefined
+          ? Number(booking.payableAmount)
+          : (booking.pricingSnapshot?.subtotal !== undefined
+            ? Number(booking.pricingSnapshot.subtotal)
+            : Math.max(0, fullAmount - depositAmount)));
       const orderAmount = onlineAmount > 0 ? onlineAmount : fullAmount;
       const currency = 'INR';
 
@@ -290,14 +324,26 @@ class PaymentService {
       // Include paymentSessionId on return object for frontend checkout SDK
       createdPayment.paymentSessionId = providerResponse.paymentSessionId;
 
-      // 9. Transition booking status to PAYMENT_PENDING if PENDING / initiated
-      if (bStatus === 'pending' || bStatus === 'initiated') {
-        const updateStatusVal = (booking.status === 'PENDING') ? 'PAYMENT_PENDING' : BOOKING_STATUS.PAYMENT_PENDING;
-        await this.bookingRepository.updateStatus(
-          booking.id,
-          customerId,
-          updateStatusVal,
+      // 9. Transition booking status to PAYMENT_PENDING if PENDING / initiated and maintain payment deadline
+      const updateStatusVal = (booking.status === 'PENDING') ? 'PAYMENT_PENDING' : BOOKING_STATUS.PAYMENT_PENDING;
+      try {
+        await this.bookingRepository.query(
+          `UPDATE bookings
+           SET status = $1,
+               payment_initiated_at = COALESCE(payment_initiated_at, CURRENT_TIMESTAMP),
+               payment_expires_at = COALESCE(payment_expires_at, CURRENT_TIMESTAMP + interval '5 minutes'),
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = $2 AND customer_id = $3`,
+          [updateStatusVal, booking.id, customerId],
         );
+      } catch (_) {
+        if (bStatus === 'pending' || bStatus === 'initiated') {
+          await this.bookingRepository.updateStatus(
+            booking.id,
+            customerId,
+            updateStatusVal,
+          );
+        }
       }
 
       // 10. Record idempotency inside transaction
@@ -613,8 +659,10 @@ class PaymentService {
           name: customer ? customer.fullName : 'Customer',
         },
         orderMeta: {
-          returnUrl: `${process.env.APP_DEEP_LINK || 'gongo://'}payment/result?order_id=${providerOrderId}`,
-          notifyUrl: `${process.env.BACKEND_PUBLIC_URL || ''}/api/v1/payments/webhook/cashfree`,
+          returnUrl: typeof this.provider?.resolveReturnUrl === 'function'
+            ? this.provider.resolveReturnUrl(providerOrderId)
+            : undefined,
+          notifyUrl: process.env.CASHFREE_NOTIFY_URL || (process.env.BACKEND_PUBLIC_URL ? `${process.env.BACKEND_PUBLIC_URL}/api/v1/payments/webhook/cashfree` : undefined),
         },
         orderNote: `GONGO Overtime Fare: Booking #${booking.bookingNumber || booking.id}`,
       });

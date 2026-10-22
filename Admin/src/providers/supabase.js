@@ -55,6 +55,7 @@ async function verifyPasswordCredentials({ email, password }) {
 
 module.exports = {
   getSupabaseClient,
+  getSupabaseAdmin: getSupabaseClient,
   setMockSupabaseClient,
   resetSupabaseClient,
   verifyPasswordCredentials,

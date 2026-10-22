@@ -127,6 +127,24 @@ class PricingService {
     const rate12h = twelveHourRate !== undefined && twelveHourRate !== null ? roundMoney(twelveHourRate) : roundMoney(hRate * 12);
 
     const pricingBreakdown = [];
+
+    // Rule: Minimum rental charge is 3 hours.
+    // If a customer books a vehicle for 1 hour, 2 hours, or any duration less than 3 hours, charge the configured 3-hour price.
+    if (actualHours <= 3) {
+      pricingBreakdown.push({
+        type: '3_HOURS',
+        label: '3 Hours',
+        hours: 3,
+        amount: rate3h,
+      });
+      return {
+        actualDurationHours: actualHours,
+        billableDurationHours: 3,
+        pricingBreakdown,
+        rentalAmount: rate3h,
+      };
+    }
+
     let rentalAmount = 0;
     let remaining = actualHours;
 

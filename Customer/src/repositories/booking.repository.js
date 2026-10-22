@@ -155,6 +155,9 @@ class BookingRepository extends BaseRepository {
 
       cancellationReason: row.cancellation_reason || (row.cancellation && row.cancellation.reason) || null,
       paymentInitiatedAt: row.payment_initiated_at ? (row.payment_initiated_at instanceof Date ? row.payment_initiated_at.toISOString() : row.payment_initiated_at) : null,
+      paymentExpiresAt: row.payment_expires_at
+        ? (row.payment_expires_at instanceof Date ? row.payment_expires_at.toISOString() : row.payment_expires_at)
+        : (row.paymentExpiresAt || (row.payment_initiated_at ? new Date(new Date(row.payment_initiated_at).getTime() + 5 * 60 * 1000).toISOString() : (row.created_at ? new Date(new Date(row.created_at).getTime() + 5 * 60 * 1000).toISOString() : null))),
       paymentProviderOrderId: row.payment_provider_order_id || null,
 
       createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
@@ -520,17 +523,20 @@ class BookingRepository extends BaseRepository {
       const bookingNumber = data.bookingNumber || bookingReference || `BK-${Date.now()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
       bookingReference = bookingReference || bookingNumber;
 
+      const paymentInitiatedAt = data.paymentInitiatedAt || new Date();
+      const paymentExpiresAt = data.paymentExpiresAt || new Date(paymentInitiatedAt.getTime() + 5 * 60 * 1000);
+
       const insertBookingSql = `
         INSERT INTO bookings (
           booking_reference, booking_number, customer_id, partner_id, vehicle_id, shop_id,
           start_at, end_at, status, booking_status, payment_status,
           subtotal, discount_amount, extra_charges, tax_amount, platform_fee,
-          total_amount, currency, pickup_location
+          total_amount, currency, pickup_location, payment_initiated_at, payment_expires_at
         ) VALUES (
           $1, $2, $3, $4, $5, $6, $7,
           $8, $9, $10, $11, $12,
           $13, $14, $15, $16, $17,
-          $18, $19
+          $18, $19, $20, $21
         )
         RETURNING *
       `;
@@ -557,44 +563,88 @@ class BookingRepository extends BaseRepository {
           totalAmount,
           currency,
           pickupLocation,
+          paymentInitiatedAt,
+          paymentExpiresAt,
         ]);
       } catch (insertErr) {
-        if (insertErr.message && insertErr.message.includes('booking_reference')) {
-          // Fallback if booking_reference column missing in legacy test fixture
+        if (insertErr.message && (insertErr.message.includes('payment_expires_at') || insertErr.message.includes('payment_initiated_at') || insertErr.message.includes('booking_reference'))) {
+          // Fallback if payment deadline or booking_reference column missing in legacy test fixture
           const fallbackSql = `
             INSERT INTO bookings (
-              booking_number, customer_id, partner_id, vehicle_id, shop_id,
+              booking_reference, booking_number, customer_id, partner_id, vehicle_id, shop_id,
               start_at, end_at, status, booking_status, payment_status,
               subtotal, discount_amount, extra_charges, tax_amount, platform_fee,
               total_amount, currency, pickup_location
             ) VALUES (
-              $1, $2, $3, $4, $5,
-              $6, $7, $8, $9, $10,
-              $11, $12, $13, $14, $15,
-              $16, $17, $18
+              $1, $2, $3, $4, $5, $6, $7,
+              $8, $9, $10, $11, $12,
+              $13, $14, $15, $16, $17,
+              $18, $19
             )
             RETURNING *
           `;
-          bRes = await runner.query(fallbackSql, [
-            bookingNumber,
-            data.customerId,
-            partnerId,
-            data.vehicleId,
-            shopId,
-            data.startAt,
-            data.endAt,
-            supabaseStatus,
-            data.bookingStatus || (supabaseStatus === 'initiated' ? 'PENDING' : supabaseStatus.toUpperCase()),
-            data.paymentStatus || 'PENDING',
-            subtotal,
-            discountAmount,
-            extraCharges,
-            taxAmount,
-            platformFee,
-            totalAmount,
-            currency,
-            pickupLocation,
-          ]);
+          try {
+            bRes = await runner.query(fallbackSql, [
+              bookingReference,
+              bookingNumber,
+              data.customerId,
+              partnerId,
+              data.vehicleId,
+              shopId,
+              data.startAt,
+              data.endAt,
+              supabaseStatus,
+              data.bookingStatus || (supabaseStatus === 'initiated' ? 'PENDING' : supabaseStatus.toUpperCase()),
+              data.paymentStatus || 'PENDING',
+              subtotal,
+              discountAmount,
+              extraCharges,
+              taxAmount,
+              platformFee,
+              totalAmount,
+              currency,
+              pickupLocation,
+            ]);
+          } catch (fbErr) {
+            if (fbErr.message && fbErr.message.includes('booking_reference')) {
+              const legacyRefFallbackSql = `
+                INSERT INTO bookings (
+                  booking_number, customer_id, partner_id, vehicle_id, shop_id,
+                  start_at, end_at, status, booking_status, payment_status,
+                  subtotal, discount_amount, extra_charges, tax_amount, platform_fee,
+                  total_amount, currency, pickup_location
+                ) VALUES (
+                  $1, $2, $3, $4, $5,
+                  $6, $7, $8, $9, $10,
+                  $11, $12, $13, $14, $15,
+                  $16, $17, $18
+                )
+                RETURNING *
+              `;
+              bRes = await runner.query(legacyRefFallbackSql, [
+                bookingNumber,
+                data.customerId,
+                partnerId,
+                data.vehicleId,
+                shopId,
+                data.startAt,
+                data.endAt,
+                supabaseStatus,
+                data.bookingStatus || (supabaseStatus === 'initiated' ? 'PENDING' : supabaseStatus.toUpperCase()),
+                data.paymentStatus || 'PENDING',
+                subtotal,
+                discountAmount,
+                extraCharges,
+                taxAmount,
+                platformFee,
+                totalAmount,
+                currency,
+                pickupLocation,
+              ]);
+            } else {
+              throw fbErr;
+            }
+          }
         } else {
           throw insertErr;
         }
@@ -751,14 +801,33 @@ class BookingRepository extends BaseRepository {
           bc.refund_status AS cancellation_refund_status,
           bc.upi_id AS cancellation_upi_id,
           bc.policy_name AS cancellation_policy_name,
-          (
-            SELECT p.created_at
-            FROM payments p
-            WHERE p.booking_id = b.id
-              AND (p.payment_type = 'BOOKING_ADVANCE' OR p.payment_type IS NULL)
-            ORDER BY p.created_at DESC
-            LIMIT 1
+          COALESCE(
+            b.payment_initiated_at,
+            (
+              SELECT p.created_at
+              FROM payments p
+              WHERE p.booking_id = b.id
+                AND (p.payment_type = 'BOOKING_ADVANCE' OR p.payment_type IS NULL)
+              ORDER BY p.created_at DESC
+              LIMIT 1
+            ),
+            b.created_at
           ) AS payment_initiated_at,
+          COALESCE(
+            b.payment_expires_at,
+            COALESCE(
+              (
+                SELECT p.created_at
+                FROM payments p
+                WHERE p.booking_id = b.id
+                  AND (p.payment_type = 'BOOKING_ADVANCE' OR p.payment_type IS NULL)
+                ORDER BY p.created_at DESC
+                LIMIT 1
+              ),
+              b.payment_initiated_at,
+              b.created_at
+            ) + interval '5 minutes'
+          ) AS payment_expires_at,
           (
             SELECT p.provider_order_id
             FROM payments p

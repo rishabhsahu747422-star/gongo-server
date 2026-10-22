@@ -20,6 +20,8 @@ module.exports = async function globalSetup() {
 
   // Database & Cache
   process.env.DATABASE_URL = process.env.DATABASE_URL || 'postgresql://test:test@localhost:5432/gongo_test';
+  process.env.DB_POOL_MIN = '0';
+  process.env.DB_POOL_MAX = '3';
   process.env.REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
   process.env.USE_REDIS_MOCK = 'true';
 

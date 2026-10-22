@@ -207,24 +207,58 @@ class AdminVerificationService {
       : 'Partner verified by admin';
     const force = Boolean(body.force);
 
-    const updated = await adminVerificationRepository.withTransaction(async (client) => {
-      const current = await adminVerificationRepository.findPartnerByIdForUpdate(validId, client);
-      if (!current) {
-        throw new NotFoundError('Partner not found', ERROR_CODES.NOT_FOUND);
-      }
+    try {
+      const updated = await adminVerificationRepository.withTransaction(async (client) => {
+        const current = await adminVerificationRepository.findPartnerByIdForUpdate(validId, client);
+        if (!current) {
+          throw new NotFoundError('Partner not found', ERROR_CODES.NOT_FOUND);
+        }
 
-      if (current.kycStatus === 'VERIFIED' && !force) {
-        return adminVerificationRepository.findPartnerVerificationById(validId, client);
-      }
+        if (current.kycStatus === 'VERIFIED' && !force) {
+          return adminVerificationRepository.findPartnerVerificationById(validId, client);
+        }
 
-      const beforeState = { kycStatus: current.kycStatus };
-      const res = await adminVerificationRepository.updatePartnerKycStatus(
-        validId,
-        'VERIFIED',
-        client,
-      );
+        const beforeState = {
+          kycStatus: current.kycStatus,
+          status: current.status,
+          verificationStatus: current.verificationStatus,
+          isActive: current.isActive,
+        };
 
-      await adminActionRepository.createAction({
+        const res = await adminVerificationRepository.updatePartnerKycStatus(
+          validId,
+          'VERIFIED',
+          client,
+          {
+            previousStatus: current.kycStatus,
+            reason,
+            verifiedBy: auditContext.actorId || null,
+          },
+        );
+
+        await adminActionRepository.createAction({
+          actorId: auditContext.actorId || 'system-admin',
+          actorRole: auditContext.actorRole || 'ADMIN',
+          permission: auditContext.permission || 'kyc.verify',
+          action: 'PARTNER_KYC_APPROVED',
+          targetResource: 'PARTNER',
+          targetResourceId: validId,
+          requestId: auditContext.requestId || null,
+          ipAddress: auditContext.ipAddress || null,
+          userAgent: auditContext.userAgent || null,
+          beforeState,
+          afterState: {
+            kycStatus: 'VERIFIED',
+            status: res.status,
+            verificationStatus: 'VERIFIED',
+          },
+          metadata: { reason, force, previousStatus: current.kycStatus },
+        }, client);
+
+        return res;
+      });
+
+      auditService.logAdminAction({
         actorId: auditContext.actorId || 'system-admin',
         actorRole: auditContext.actorRole || 'ADMIN',
         permission: auditContext.permission || 'kyc.verify',
@@ -234,30 +268,29 @@ class AdminVerificationService {
         requestId: auditContext.requestId || null,
         ipAddress: auditContext.ipAddress || null,
         userAgent: auditContext.userAgent || null,
-        beforeState,
+        beforeState: { kycStatus: updated.kycStatus === 'VERIFIED' ? 'PENDING' : updated.kycStatus },
         afterState: { kycStatus: 'VERIFIED' },
-        metadata: { reason, force, previousStatus: current.kycStatus },
-      }, client);
+        metadata: { reason, force },
+      });
 
-      return res;
-    });
+      logger.info('Partner KYC approved successfully', {
+        operation: 'approvePartner',
+        partnerId: validId,
+        requestId: auditContext.requestId || null,
+        actorId: auditContext.actorId || null,
+      });
 
-    auditService.logAdminAction({
-      actorId: auditContext.actorId || 'system-admin',
-      actorRole: auditContext.actorRole || 'ADMIN',
-      permission: auditContext.permission || 'kyc.verify',
-      action: 'PARTNER_KYC_APPROVED',
-      targetResource: 'PARTNER',
-      targetResourceId: validId,
-      requestId: auditContext.requestId || null,
-      ipAddress: auditContext.ipAddress || null,
-      userAgent: auditContext.userAgent || null,
-      beforeState: { kycStatus: updated.kycStatus },
-      afterState: { kycStatus: 'VERIFIED' },
-      metadata: { reason, force },
-    });
-
-    return updated;
+      return updated;
+    } catch (err) {
+      logger.error('Failed to approve partner KYC', {
+        operation: 'approvePartner',
+        partnerId: validId,
+        requestId: auditContext.requestId || null,
+        errorCode: err.code || err.statusCode || 'UNKNOWN_ERROR',
+        message: err.message,
+      });
+      throw err;
+    }
   }
 
   /**
@@ -291,24 +324,58 @@ class AdminVerificationService {
 
     const force = Boolean(body.force);
 
-    const updated = await adminVerificationRepository.withTransaction(async (client) => {
-      const current = await adminVerificationRepository.findPartnerByIdForUpdate(validId, client);
-      if (!current) {
-        throw new NotFoundError('Partner not found', ERROR_CODES.NOT_FOUND);
-      }
+    try {
+      const updated = await adminVerificationRepository.withTransaction(async (client) => {
+        const current = await adminVerificationRepository.findPartnerByIdForUpdate(validId, client);
+        if (!current) {
+          throw new NotFoundError('Partner not found', ERROR_CODES.NOT_FOUND);
+        }
 
-      if (current.kycStatus === 'REJECTED' && !force) {
-        return adminVerificationRepository.findPartnerVerificationById(validId, client);
-      }
+        if (current.kycStatus === 'REJECTED' && !force) {
+          return adminVerificationRepository.findPartnerVerificationById(validId, client);
+        }
 
-      const beforeState = { kycStatus: current.kycStatus };
-      const res = await adminVerificationRepository.updatePartnerKycStatus(
-        validId,
-        'REJECTED',
-        client,
-      );
+        const beforeState = {
+          kycStatus: current.kycStatus,
+          status: current.status,
+          verificationStatus: current.verificationStatus,
+          isActive: current.isActive,
+        };
 
-      await adminActionRepository.createAction({
+        const res = await adminVerificationRepository.updatePartnerKycStatus(
+          validId,
+          'REJECTED',
+          client,
+          {
+            previousStatus: current.kycStatus,
+            reason,
+            verifiedBy: auditContext.actorId || null,
+          },
+        );
+
+        await adminActionRepository.createAction({
+          actorId: auditContext.actorId || 'system-admin',
+          actorRole: auditContext.actorRole || 'ADMIN',
+          permission: auditContext.permission || 'kyc.reject',
+          action: 'PARTNER_KYC_REJECTED',
+          targetResource: 'PARTNER',
+          targetResourceId: validId,
+          requestId: auditContext.requestId || null,
+          ipAddress: auditContext.ipAddress || null,
+          userAgent: auditContext.userAgent || null,
+          beforeState,
+          afterState: {
+            kycStatus: 'REJECTED',
+            status: res.status,
+            verificationStatus: 'REJECTED',
+          },
+          metadata: { reason, force, previousStatus: current.kycStatus },
+        }, client);
+
+        return res;
+      });
+
+      auditService.logAdminAction({
         actorId: auditContext.actorId || 'system-admin',
         actorRole: auditContext.actorRole || 'ADMIN',
         permission: auditContext.permission || 'kyc.reject',
@@ -318,30 +385,30 @@ class AdminVerificationService {
         requestId: auditContext.requestId || null,
         ipAddress: auditContext.ipAddress || null,
         userAgent: auditContext.userAgent || null,
-        beforeState,
+        beforeState: { kycStatus: updated.kycStatus === 'REJECTED' ? 'PENDING' : updated.kycStatus },
         afterState: { kycStatus: 'REJECTED' },
-        metadata: { reason, force, previousStatus: current.kycStatus },
-      }, client);
+        metadata: { reason, force },
+      });
 
-      return res;
-    });
+      logger.info('Partner KYC rejected successfully', {
+        operation: 'rejectPartner',
+        partnerId: validId,
+        requestId: auditContext.requestId || null,
+        actorId: auditContext.actorId || null,
+        reason,
+      });
 
-    auditService.logAdminAction({
-      actorId: auditContext.actorId || 'system-admin',
-      actorRole: auditContext.actorRole || 'ADMIN',
-      permission: auditContext.permission || 'kyc.reject',
-      action: 'PARTNER_KYC_REJECTED',
-      targetResource: 'PARTNER',
-      targetResourceId: validId,
-      requestId: auditContext.requestId || null,
-      ipAddress: auditContext.ipAddress || null,
-      userAgent: auditContext.userAgent || null,
-      beforeState: { kycStatus: updated.kycStatus },
-      afterState: { kycStatus: 'REJECTED' },
-      metadata: { reason, force },
-    });
-
-    return updated;
+      return updated;
+    } catch (err) {
+      logger.error('Failed to reject partner KYC', {
+        operation: 'rejectPartner',
+        partnerId: validId,
+        requestId: auditContext.requestId || null,
+        errorCode: err.code || err.statusCode || 'UNKNOWN_ERROR',
+        message: err.message,
+      });
+      throw err;
+    }
   }
 
   // ── Vehicle Verifications ──────────────────────────────────────────────────

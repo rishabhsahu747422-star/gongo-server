@@ -20,6 +20,9 @@ router.get('/', normalQueryLimiter, (req, res, next) => adminBannerController.li
 // POST /api/v1/admin/banners/upload (Must precede /:id)
 router.post('/upload', sensitiveOpLimiter, (req, res, next) => adminBannerController.uploadAsset(req, res, next));
 
+// POST /api/v1/admin/banners/bulk (Must precede /:id)
+router.post('/bulk', sensitiveOpLimiter, (req, res, next) => adminBannerController.createBulk(req, res, next));
+
 // PUT /api/v1/admin/banners/reorder (Must precede /:id)
 router.put('/reorder', sensitiveOpLimiter, (req, res, next) => adminBannerController.reorderBanners(req, res, next));
 

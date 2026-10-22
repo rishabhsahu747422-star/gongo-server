@@ -157,6 +157,7 @@ async function verifyIdToken(token, checkRevoked = true) {
       uid: `auth_${phoneDigits || rawId}`,
       phone_number: phoneDigits ? `+91${phoneDigits}` : null,
       email: rawId.includes('@') ? rawId : null,
+      role: 'customer',
       iat: Math.floor(Date.now() / 1000),
     };
   }

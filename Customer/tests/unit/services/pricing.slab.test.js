@@ -34,26 +34,26 @@ describe('Pricing Engine — Slot Combination Pricing & Verification Matrix', ()
 
   describe('Core Rule & Mandatory 12 Duration Test Matrix (Reference Rates)', () => {
     // 1. 1 hour
-    test('1. 1 hour booking → 1h slot (100)', () => {
+    test('1. 1 hour booking → 3h minimum charge (250)', () => {
       const res = PricingService.calculateRentalPrice({
         actualDurationHours: 1,
         ...rates,
       });
       expect(res.actualDurationHours).toBe(1);
-      expect(res.billableDurationHours).toBe(1);
-      expect(res.rentalAmount).toBe(100);
-      expect(summarizeBreakdown(res.pricingBreakdown)).toBe('1h');
+      expect(res.billableDurationHours).toBe(3);
+      expect(res.rentalAmount).toBe(250);
+      expect(summarizeBreakdown(res.pricingBreakdown)).toBe('3h');
     });
 
-    test('2 hours booking → 1h + 1h (200)', () => {
+    test('2 hours booking → 3h minimum charge (250)', () => {
       const res = PricingService.calculateRentalPrice({
         actualDurationHours: 2,
         ...rates,
       });
       expect(res.actualDurationHours).toBe(2);
-      expect(res.billableDurationHours).toBe(2);
-      expect(res.rentalAmount).toBe(200);
-      expect(summarizeBreakdown(res.pricingBreakdown)).toBe('1h + 1h');
+      expect(res.billableDurationHours).toBe(3);
+      expect(res.rentalAmount).toBe(250);
+      expect(summarizeBreakdown(res.pricingBreakdown)).toBe('3h');
     });
 
     // 2. 3 hours
@@ -314,10 +314,11 @@ describe('Pricing Engine — Slot Combination Pricing & Verification Matrix', ()
       dailyRate: 2100,
     };
 
-    test('1 hour uses independently configured price (120)', () => {
+    test('1 hour applies minimum 3-hour charge using configured price_3_hours (320)', () => {
       const res = PricingService.calculateRentalPrice({ actualDurationHours: 1, ...independentRates });
-      expect(res.rentalAmount).toBe(120);
-      expect(summarizeBreakdown(res.pricingBreakdown)).toBe('1h');
+      expect(res.rentalAmount).toBe(320);
+      expect(res.billableDurationHours).toBe(3);
+      expect(summarizeBreakdown(res.pricingBreakdown)).toBe('3h');
     });
 
     test('3 hours uses independently configured price (320, not 360)', () => {
@@ -456,15 +457,15 @@ describe('Pricing Engine — Slot Combination Pricing & Verification Matrix', ()
       expect(summarizeBreakdown(res.pricingBreakdown)).toBe('3h');
     });
 
-    test('11 PM → 1 AM next day = 2 hours → 1h + 1h price (₹200)', () => {
+    test('11 PM → 1 AM next day = 2 hours → minimum 3-hour charge (₹250)', () => {
       const startAt = new Date('2026-10-10T23:00:00Z');
       const endAt = new Date('2026-10-11T01:00:00Z');
       const res = PricingService.calculateBaseRental(mockVehicle, 'HOURLY', startAt, endAt);
 
       expect(res.actualDurationHours).toBe(2);
-      expect(res.billableDurationHours).toBe(2);
-      expect(res.baseAmount).toBe(200);
-      expect(summarizeBreakdown(res.pricingBreakdown)).toBe('1h + 1h');
+      expect(res.billableDurationHours).toBe(3);
+      expect(res.baseAmount).toBe(250);
+      expect(summarizeBreakdown(res.pricingBreakdown)).toBe('3h');
     });
 
     test('11 PM → 6 AM next day = 7 hours → 6-hour + 1-hour price (₹550)', () => {
@@ -544,7 +545,7 @@ describe('Pricing Engine — Slot Combination Pricing & Verification Matrix', ()
       expect(quote.breakdown.totalAmount).toBe(800 + 1500); // 2300 includes deposit in total accounting breakdown
     });
 
-    test('Quote accurately calculates 1 hour rental without minimum charge inflation', async () => {
+    test('Quote enforces minimum 3-hour rental charge for 1-hour booking', async () => {
       const vehicle = {
         id: '11111111-2222-3333-4444-555555555555',
         price_per_hour: 100,
@@ -562,10 +563,10 @@ describe('Pricing Engine — Slot Combination Pricing & Verification Matrix', ()
       });
 
       expect(quote.actualDurationHours).toBe(1);
-      expect(quote.billableDurationHours).toBe(1);
-      expect(quote.rentalAmount).toBe(100);
-      expect(quote.breakdown.payableAmount).toBe(100);
-      expect(quote.pricingBreakdown[0].type).toBe('1_HOUR');
+      expect(quote.billableDurationHours).toBe(3);
+      expect(quote.rentalAmount).toBe(250);
+      expect(quote.breakdown.payableAmount).toBe(250);
+      expect(quote.pricingBreakdown[0].type).toBe('3_HOURS');
     });
   });
 });

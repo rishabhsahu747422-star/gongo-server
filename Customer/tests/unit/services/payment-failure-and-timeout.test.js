@@ -215,7 +215,7 @@ describe('Payment Failure & 5-Minute Timeout Auto-Cancellation Suite', () => {
 
       mockClient.query.mockImplementation((sql) => {
         if (sql.includes('BEGIN') || sql.includes('COMMIT')) return Promise.resolve();
-        if (sql.includes('FOR UPDATE OF b, p SKIP LOCKED')) {
+        if (sql.includes('SKIP LOCKED')) {
           return Promise.resolve({ rows: [expiredCandidate] });
         }
         if (sql.includes('SELECT 1 FROM payments')) {
@@ -267,7 +267,7 @@ describe('Payment Failure & 5-Minute Timeout Auto-Cancellation Suite', () => {
         if (sql.includes('BEGIN') || sql.includes('COMMIT') || sql.includes('SAVEPOINT') || sql.includes('RELEASE')) {
           return Promise.resolve();
         }
-        if (sql.includes('FOR UPDATE OF b, p SKIP LOCKED')) {
+        if (sql.includes('SKIP LOCKED')) {
           return Promise.resolve({ rows: [expiredCandidate] });
         }
         if (sql.includes('SELECT 1 FROM payments')) {
@@ -386,7 +386,7 @@ describe('Payment Failure & 5-Minute Timeout Auto-Cancellation Suite', () => {
         if (sql.includes('BEGIN') || sql.includes('COMMIT') || sql.includes('SAVEPOINT') || sql.includes('RELEASE')) {
           return Promise.resolve();
         }
-        if (sql.includes('FOR UPDATE OF b, p SKIP LOCKED')) {
+        if (sql.includes('SKIP LOCKED')) {
           return Promise.resolve({ rows: [candidate] });
         }
         if (sql.includes('FROM payments')) {
@@ -422,7 +422,7 @@ describe('Payment Failure & 5-Minute Timeout Auto-Cancellation Suite', () => {
       // A booking without payment records returns 0 rows
       mockClient.query.mockImplementation((sql) => {
         if (sql.includes('BEGIN') || sql.includes('COMMIT')) return Promise.resolve();
-        if (sql.includes('FOR UPDATE OF b, p SKIP LOCKED')) {
+        if (sql.includes('SKIP LOCKED')) {
           return Promise.resolve({ rows: [] }); // No advance payment record exists
         }
         return Promise.resolve({ rows: [] });
@@ -689,7 +689,7 @@ describe('Payment Failure & 5-Minute Timeout Auto-Cancellation Suite', () => {
       // Since payment was initiated 2 minutes ago, the SQL query does NOT return it
       mockClient.query.mockImplementation((sql, params) => {
         if (sql.includes('BEGIN') || sql.includes('COMMIT')) return Promise.resolve();
-        if (sql.includes('FOR UPDATE OF b, p SKIP LOCKED')) {
+        if (sql.includes('SKIP LOCKED')) {
           // Verify that the query checks p.created_at <= cutoff
           expect(sql).toContain('p.created_at <= $1');
           expect(sql).not.toContain('b.created_at <= $1');
@@ -726,7 +726,7 @@ describe('Payment Failure & 5-Minute Timeout Auto-Cancellation Suite', () => {
         if (sql.includes('BEGIN') || sql.includes('COMMIT') || sql.includes('SAVEPOINT') || sql.includes('RELEASE')) {
           return Promise.resolve();
         }
-        if (sql.includes('FOR UPDATE OF b, p SKIP LOCKED')) {
+        if (sql.includes('SKIP LOCKED')) {
           return Promise.resolve({ rows: [candidate] });
         }
         if (sql.includes('SELECT 1 FROM payments')) {
@@ -788,7 +788,7 @@ describe('Payment Failure & 5-Minute Timeout Auto-Cancellation Suite', () => {
         if (sql.includes('BEGIN') || sql.includes('COMMIT') || sql.includes('SAVEPOINT') || sql.includes('RELEASE')) {
           return Promise.resolve();
         }
-        if (sql.includes('FOR UPDATE OF b, p SKIP LOCKED')) {
+        if (sql.includes('SKIP LOCKED')) {
           return Promise.resolve({ rows: [candidate] });
         }
         if (sql.includes('SELECT 1 FROM payments')) {
@@ -847,7 +847,7 @@ describe('Payment Failure & 5-Minute Timeout Auto-Cancellation Suite', () => {
         if (sql.includes('BEGIN') || sql.includes('COMMIT') || sql.includes('SAVEPOINT') || sql.includes('RELEASE') || sql.includes('ROLLBACK TO SAVEPOINT')) {
           return Promise.resolve();
         }
-        if (sql.includes('FOR UPDATE OF b, p SKIP LOCKED')) {
+        if (sql.includes('SKIP LOCKED')) {
           return Promise.resolve({ rows: [candidate1, candidate2] });
         }
         if (sql.includes('SELECT 1 FROM payments')) {

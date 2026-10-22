@@ -415,6 +415,40 @@ class AdminBannerService {
 
     return reordered;
   }
+
+  /**
+   * Creates multiple banners in a batch operation.
+   */
+  async createBulk(bannersList = [], auditCtx = {}) {
+    if (!Array.isArray(bannersList) || bannersList.length === 0) {
+      throw new BadRequestError('banners must be a non-empty array', ERROR_CODES.VALIDATION_ERROR);
+    }
+
+    const created = [];
+    const errors = [];
+
+    for (let i = 0; i < bannersList.length; i++) {
+      const bannerPayload = bannersList[i];
+      try {
+        const item = await this.createBanner(bannerPayload, auditCtx);
+        created.push(item);
+      } catch (err) {
+        logger.warn(`Failed to create banner at index ${i}:`, { error: err.message });
+        errors.push({
+          index: i,
+          title: bannerPayload.title || `Banner ${i + 1}`,
+          error: err.message,
+        });
+      }
+    }
+
+    return {
+      created,
+      errors,
+      totalRequested: bannersList.length,
+      totalCreated: created.length,
+    };
+  }
 }
 
 module.exports = new AdminBannerService();

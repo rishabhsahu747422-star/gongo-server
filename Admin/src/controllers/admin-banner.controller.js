@@ -112,6 +112,17 @@ class AdminBannerController {
       return next(err);
     }
   }
+
+  async createBulk(req, res, next) {
+    try {
+      const auditCtx = this._buildAuditContext(req, res, 'banners.create');
+      const banners = req.body?.banners || [];
+      const data = await adminBannerService.createBulk(banners, auditCtx);
+      return sendSuccess(res, data, 'Batch banners processed', 201);
+    } catch (err) {
+      return next(err);
+    }
+  }
 }
 
 module.exports = new AdminBannerController();

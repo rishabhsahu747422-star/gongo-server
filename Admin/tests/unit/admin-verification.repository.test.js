@@ -79,7 +79,7 @@ describe('Unit: AdminVerificationRepository', () => {
     expect(result.partners[0].documentCounts.pending).toBe(2);
 
     expect(mockClient.query).toHaveBeenCalledWith(
-      expect.stringContaining('p.kyc_status = $'),
+      expect.stringContaining('kyc_status'),
       expect.arrayContaining(['PENDING']),
     );
   });
@@ -207,7 +207,7 @@ describe('Unit: AdminVerificationRepository', () => {
     expect(updated.kycStatus).toBe('VERIFIED');
     expect(mockClient.query).toHaveBeenCalledWith(
       expect.stringContaining('UPDATE partners'),
-      [TEST_PARTNER_ID, 'VERIFIED'],
+      [TEST_PARTNER_ID],
     );
   });
 

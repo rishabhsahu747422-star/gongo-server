@@ -3,6 +3,7 @@
 const adminVerificationService = require('../services/admin-verification.service');
 const { getClientIp } = require('../middlewares/rateLimiter');
 const { sendSuccess } = require('../utils/response');
+const logger = require('../config/logger');
 
 class AdminVerificationController {
   constructor() {
@@ -79,8 +80,15 @@ class AdminVerificationController {
         req.body,
         auditCtx,
       );
-      return sendSuccess(res, data);
+      return sendSuccess(res, data, 'Partner verification approved successfully');
     } catch (err) {
+      logger.error('Admin verification approvePartner controller failure', {
+        operation: 'approvePartner',
+        partnerId: req.params?.id,
+        requestId: req.id || (res.locals && res.locals.requestId) || null,
+        errorCode: err.code || err.statusCode || 'UNKNOWN_ERROR',
+        error: err.message,
+      });
       return next(err);
     }
   }
@@ -97,8 +105,15 @@ class AdminVerificationController {
         req.body,
         auditCtx,
       );
-      return sendSuccess(res, data);
+      return sendSuccess(res, data, 'Partner verification rejected successfully');
     } catch (err) {
+      logger.error('Admin verification rejectPartner controller failure', {
+        operation: 'rejectPartner',
+        partnerId: req.params?.id,
+        requestId: req.id || (res.locals && res.locals.requestId) || null,
+        errorCode: err.code || err.statusCode || 'UNKNOWN_ERROR',
+        error: err.message,
+      });
       return next(err);
     }
   }

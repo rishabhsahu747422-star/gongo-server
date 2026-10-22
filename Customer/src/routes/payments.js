@@ -34,13 +34,24 @@ router.get(
 );
 
 /**
+ * @route   GET /api/v1/payments/cashfree/return
+ * @desc    Cashfree browser return URL endpoint.
+ *          Verifies authoritative payment status and redirects/presents result to customer app.
+ * @access  Public (Cashfree browser redirect)
+ */
+router.get(
+  ['/cashfree/return', '/return'],
+  (req, res, next) => paymentController.handlePaymentReturn(req, res, next),
+);
+
+/**
  * @route   POST /api/v1/payments/webhook/cashfree
  * @desc    Cashfree payment gateway webhook callback.
  *          Authenticates via HMAC signature (NOT customer bearer token).
  * @access  Public (Cashfree Server)
  */
 router.post(
-  ['/webhook/cashfree', '/webhook'],
+  ['/webhook/cashfree', '/webhook', '/cashfree/webhook'],
   validateWebhook,
   (req, res, next) => paymentController.handleCashfreeWebhook(req, res, next),
 );
