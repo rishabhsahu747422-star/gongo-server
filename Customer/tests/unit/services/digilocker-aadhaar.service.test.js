@@ -394,6 +394,128 @@ describe('DigiLocker Aadhaar XML Verification Service Unit Tests', () => {
       );
     });
 
+    it('successfully processes callback when Sandbox returns status succeeded (documented terminal success)', async () => {
+      mockDigiLocker.isSandboxCoInMode.mockReturnValue(true);
+      mockDigiLocker.getSessionStatus = jest.fn().mockResolvedValue({
+        status: 'succeeded',
+        state: 'COMPLETED',
+        isAuthorized: true,
+        isCompleted: true,
+        documentsConsented: ['aadhaar'],
+      });
+
+      const result = await service.handleCallback({
+        state: sampleState,
+        sessionId: 'digilocker_ref_123',
+      });
+
+      expect(result.status).toBe(AADHAAR_VERIFICATION_STATUS.VERIFIED);
+      expect(result.maskedAadhaar).toBe('XXXX-XXXX-1234');
+      expect(mockDigiLocker.fetchAadhaarXml).toHaveBeenCalledWith({
+        sessionId: 'digilocker_ref_123',
+      });
+    });
+
+    it('rejects callback when Sandbox returns status failed and marks verification FAILED', async () => {
+      mockDigiLocker.isSandboxCoInMode.mockReturnValue(true);
+      mockDigiLocker.getSessionStatus = jest.fn().mockResolvedValue({
+        status: 'failed',
+        state: 'FAILED',
+        isFailed: true,
+        isAuthorized: false,
+        isCompleted: false,
+      });
+
+      await expect(
+        service.handleCallback({
+          state: sampleState,
+          sessionId: 'digilocker_ref_123',
+        })
+      ).rejects.toThrow(BadRequestError);
+
+      expect(mockVerificationRepo.updateVerification).toHaveBeenCalledWith(
+        verificationId,
+        expect.objectContaining({
+          verificationStatus: AADHAAR_VERIFICATION_STATUS.FAILED,
+        })
+      );
+    });
+
+    it('rejects callback when Sandbox reports session has expired and marks verification EXPIRED', async () => {
+      mockDigiLocker.isSandboxCoInMode.mockReturnValue(true);
+      mockDigiLocker.getSessionStatus = jest.fn().mockResolvedValue({
+        status: 'expired',
+        state: 'EXPIRED',
+        isExpired: true,
+        isAuthorized: false,
+        isCompleted: false,
+      });
+
+      await expect(
+        service.handleCallback({
+          state: sampleState,
+          sessionId: 'digilocker_ref_123',
+        })
+      ).rejects.toThrow(BadRequestError);
+
+      expect(mockVerificationRepo.updateVerification).toHaveBeenCalledWith(
+        verificationId,
+        expect.objectContaining({
+          verificationStatus: AADHAAR_VERIFICATION_STATUS.EXPIRED,
+        })
+      );
+    });
+
+    it('rejects callback when Sandbox documents_consented does not include aadhaar', async () => {
+      mockDigiLocker.isSandboxCoInMode.mockReturnValue(true);
+      mockDigiLocker.getSessionStatus = jest.fn().mockResolvedValue({
+        status: 'succeeded',
+        state: 'COMPLETED',
+        isAuthorized: true,
+        isCompleted: true,
+        documentsConsented: ['pan', 'driving_license'], // Missing 'aadhaar'
+      });
+
+      await expect(
+        service.handleCallback({
+          state: sampleState,
+          sessionId: 'digilocker_ref_123',
+        })
+      ).rejects.toThrow(BadRequestError);
+
+      expect(mockVerificationRepo.updateVerification).toHaveBeenCalledWith(
+        verificationId,
+        expect.objectContaining({
+          verificationStatus: AADHAAR_VERIFICATION_STATUS.FAILED,
+        })
+      );
+    });
+
+    it('does not mark customer VERIFIED when document fetch fails despite succeeded authorization', async () => {
+      mockDigiLocker.isSandboxCoInMode.mockReturnValue(true);
+      mockDigiLocker.getSessionStatus = jest.fn().mockResolvedValue({
+        status: 'succeeded',
+        state: 'COMPLETED',
+        isAuthorized: true,
+        isCompleted: true,
+      });
+      mockDigiLocker.fetchAadhaarXml.mockRejectedValue(new BadRequestError('XML download failed', 'DOWNLOAD_FAIL'));
+
+      await expect(
+        service.handleCallback({
+          state: sampleState,
+          sessionId: 'digilocker_ref_123',
+        })
+      ).rejects.toThrow(BadRequestError);
+
+      expect(mockVerificationRepo.updateVerification).toHaveBeenCalledWith(
+        verificationId,
+        expect.objectContaining({
+          verificationStatus: AADHAAR_VERIFICATION_STATUS.FAILED,
+        })
+      );
+    });
+
     it('handles Supabase Storage upload failure without falsely marking as VERIFIED', async () => {
       mockStorageBucket.upload.mockResolvedValue({ data: null, error: { message: 'Storage bucket unavailable' } });
 
@@ -414,6 +536,48 @@ describe('DigiLocker Aadhaar XML Verification Service Unit Tests', () => {
   });
 
   describe('3. XML Structure Validation & Data Sanitization', () => {
+    it('normalizes documented Sandbox session status values accurately', () => {
+      // Completed / Authorized states
+      expect(DigiLockerProvider.normalizeSandboxSessionStatus('succeeded')).toEqual(
+        expect.objectContaining({ state: 'COMPLETED', isAuthorized: true, isPending: false, isFailed: false, isExpired: false })
+      );
+      expect(DigiLockerProvider.normalizeSandboxSessionStatus('authorized')).toEqual(
+        expect.objectContaining({ state: 'COMPLETED', isAuthorized: true })
+      );
+      expect(DigiLockerProvider.normalizeSandboxSessionStatus('completed')).toEqual(
+        expect.objectContaining({ state: 'COMPLETED', isAuthorized: true })
+      );
+
+      // Pending states
+      expect(DigiLockerProvider.normalizeSandboxSessionStatus('created')).toEqual(
+        expect.objectContaining({ state: 'PENDING', isAuthorized: false, isPending: true })
+      );
+      expect(DigiLockerProvider.normalizeSandboxSessionStatus('initialized')).toEqual(
+        expect.objectContaining({ state: 'PENDING', isAuthorized: false, isPending: true })
+      );
+
+      // Failed states
+      expect(DigiLockerProvider.normalizeSandboxSessionStatus('failed')).toEqual(
+        expect.objectContaining({ state: 'FAILED', isAuthorized: false, isFailed: true })
+      );
+      expect(DigiLockerProvider.normalizeSandboxSessionStatus('cancelled')).toEqual(
+        expect.objectContaining({ state: 'FAILED', isAuthorized: false, isFailed: true })
+      );
+
+      // Expired states
+      expect(DigiLockerProvider.normalizeSandboxSessionStatus('expired')).toEqual(
+        expect.objectContaining({ state: 'EXPIRED', isAuthorized: false, isExpired: true })
+      );
+
+      // Null, empty, unknown
+      expect(DigiLockerProvider.normalizeSandboxSessionStatus(null)).toEqual(
+        expect.objectContaining({ state: 'UNKNOWN', isAuthorized: false })
+      );
+      expect(DigiLockerProvider.normalizeSandboxSessionStatus('unknown_weird_status')).toEqual(
+        expect.objectContaining({ state: 'UNKNOWN', isAuthorized: false })
+      );
+    });
+
     it('validates authentic Aadhaar XML correctly', () => {
       const provider = new DigiLockerProvider();
       const res = provider.validateXmlStructure(validAadhaarXml);

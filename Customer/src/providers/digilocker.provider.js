@@ -371,14 +371,118 @@ class DigiLockerProvider {
   }
 
   /**
+   * Normalized session authorization states for KYC providers.
+   */
+  static SESSION_AUTH_STATE = Object.freeze({
+    COMPLETED: 'COMPLETED',
+    PENDING: 'PENDING',
+    FAILED: 'FAILED',
+    EXPIRED: 'EXPIRED',
+    UNKNOWN: 'UNKNOWN',
+  });
+
+  /**
+   * Normalizes documented Sandbox KYC session status strings.
+   * Documented values from Sandbox KYC OpenAPI specification:
+   * - 'created', 'initialized' -> PENDING (user authorization pending)
+   * - 'authorized', 'succeeded' -> COMPLETED (user completed authorization & consent)
+   * - 'failed' -> FAILED (user cancelled or provider authorization failed)
+   * - 'expired' -> EXPIRED (session timeout on provider side)
+   *
+   * @param {string} statusRaw
+   * @returns {{ state: string, isAuthorized: boolean, isPending: boolean, isFailed: boolean, isExpired: boolean }}
+   */
+  static normalizeSandboxSessionStatus(statusRaw) {
+    if (!statusRaw || typeof statusRaw !== 'string') {
+      return {
+        state: DigiLockerProvider.SESSION_AUTH_STATE.UNKNOWN,
+        isAuthorized: false,
+        isPending: false,
+        isFailed: false,
+        isExpired: false,
+      };
+    }
+
+    const s = statusRaw.trim().toLowerCase();
+
+    // Authorization completed: 'succeeded' is the primary documented success state in Sandbox KYC
+    if (s === 'succeeded' || s === 'authorized' || s === 'completed' || s === 'success' || s === 'approved') {
+      return {
+        state: DigiLockerProvider.SESSION_AUTH_STATE.COMPLETED,
+        isAuthorized: true,
+        isPending: false,
+        isFailed: false,
+        isExpired: false,
+      };
+    }
+
+    // Pending: session active, awaiting customer action in DigiLocker
+    if (s === 'created' || s === 'initialized' || s === 'pending' || s === 'in_progress') {
+      return {
+        state: DigiLockerProvider.SESSION_AUTH_STATE.PENDING,
+        isAuthorized: false,
+        isPending: true,
+        isFailed: false,
+        isExpired: false,
+      };
+    }
+
+    // Failed / Cancelled
+    if (s === 'failed' || s === 'cancelled' || s === 'rejected' || s === 'access_denied') {
+      return {
+        state: DigiLockerProvider.SESSION_AUTH_STATE.FAILED,
+        isAuthorized: false,
+        isPending: false,
+        isFailed: true,
+        isExpired: false,
+      };
+    }
+
+    // Expired
+    if (s === 'expired' || s === 'timeout') {
+      return {
+        state: DigiLockerProvider.SESSION_AUTH_STATE.EXPIRED,
+        isAuthorized: false,
+        isPending: false,
+        isFailed: false,
+        isExpired: true,
+      };
+    }
+
+    return {
+      state: DigiLockerProvider.SESSION_AUTH_STATE.UNKNOWN,
+      isAuthorized: false,
+      isPending: false,
+      isFailed: false,
+      isExpired: false,
+    };
+  }
+
+  /**
    * Retrieves session status from Sandbox.co.in KYC service.
    *
    * @param {string} sessionId
-   * @returns {Promise<{ status: string, isCompleted: boolean, raw: object }>}
+   * @returns {Promise<{ status: string, state: string, isAuthorized: boolean, isCompleted: boolean, isPending: boolean, isFailed: boolean, isExpired: boolean, documentsConsented: string[]|null, raw: object }>}
    */
   async getSessionStatus(sessionId) {
     if (this.mockDelegate && typeof this.mockDelegate.getSessionStatus === 'function') {
-      return this.mockDelegate.getSessionStatus(sessionId);
+      const mockResult = await this.mockDelegate.getSessionStatus(sessionId);
+      if (mockResult && typeof mockResult === 'object') {
+        const rawStatus = mockResult.status || (mockResult.isCompleted ? 'succeeded' : 'pending');
+        const normalized = DigiLockerProvider.normalizeSandboxSessionStatus(rawStatus);
+        return {
+          status: String(rawStatus).toLowerCase(),
+          state: mockResult.state || normalized.state,
+          isAuthorized: mockResult.isAuthorized !== undefined ? Boolean(mockResult.isAuthorized) : normalized.isAuthorized,
+          isCompleted: mockResult.isCompleted !== undefined ? Boolean(mockResult.isCompleted) : normalized.isAuthorized,
+          isPending: mockResult.isPending !== undefined ? Boolean(mockResult.isPending) : normalized.isPending,
+          isFailed: mockResult.isFailed !== undefined ? Boolean(mockResult.isFailed) : normalized.isFailed,
+          isExpired: mockResult.isExpired !== undefined ? Boolean(mockResult.isExpired) : normalized.isExpired,
+          documentsConsented: mockResult.documentsConsented || null,
+          raw: mockResult.raw || mockResult,
+        };
+      }
+      return mockResult;
     }
 
     if (!sessionId) {
@@ -412,13 +516,24 @@ class DigiLockerProvider {
     }
 
     const data = await response.json();
-    const statusStr = (data?.data?.status || '').toLowerCase();
-    const isCompleted = statusStr === 'completed' || statusStr === 'success' || statusStr === 'approved';
+    const sessionData = data?.data || {};
+    const statusRaw = sessionData.status;
+    const normalized = DigiLockerProvider.normalizeSandboxSessionStatus(statusRaw);
+
+    const documentsConsented = Array.isArray(sessionData.documents_consented)
+      ? sessionData.documents_consented
+      : null;
 
     return {
-      status: statusStr,
-      isCompleted,
-      raw: data?.data || {},
+      status: (statusRaw || '').toLowerCase(),
+      state: normalized.state,
+      isAuthorized: normalized.isAuthorized,
+      isCompleted: normalized.isAuthorized, // backwards-compatible alias
+      isPending: normalized.isPending,
+      isFailed: normalized.isFailed,
+      isExpired: normalized.isExpired,
+      documentsConsented,
+      raw: sessionData,
     };
   }
 

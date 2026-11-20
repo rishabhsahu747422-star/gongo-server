@@ -19,6 +19,7 @@ describe('DigiLocker Aadhaar Verification Integration Tests', () => {
   let mockFirebaseAuth;
   let mockStorageBucket;
   let mockSupabaseClient;
+  let defaultMockDelegate;
 
   const customerA = {
     id: '10000000-0000-4000-8000-000000000001',
@@ -115,7 +116,7 @@ describe('DigiLocker Aadhaar Verification Integration Tests', () => {
     `);
 
     // 4. Configure DigiLocker mock delegate
-    digiLockerProvider.setMockDelegate({
+    defaultMockDelegate = {
       initiateSession: async ({ customerId, state, redirectUri }) => ({
         authorizationUrl: `https://api.digitallocker.gov.in/public/oauth2/1/authorize?client_id=test&state=${state}`,
         state: state || 'mock_state_123',
@@ -135,10 +136,11 @@ describe('DigiLocker Aadhaar Verification Integration Tests', () => {
         isAuthorized: true,
       }),
       getSessionStatus: async (sessionId) => ({
-        status: 'completed',
+        status: 'succeeded',
         isCompleted: true,
       }),
-    });
+    };
+    digiLockerProvider.setMockDelegate(defaultMockDelegate);
 
     // 5. Configure mock Supabase storage
     mockStorageBucket = {
@@ -153,6 +155,10 @@ describe('DigiLocker Aadhaar Verification Integration Tests', () => {
     setMockSupabaseClient(mockSupabaseClient);
 
     app = createApp();
+  });
+
+  afterEach(() => {
+    digiLockerProvider.setMockDelegate(defaultMockDelegate);
   });
 
   afterAll(() => {
@@ -350,6 +356,92 @@ describe('DigiLocker Aadhaar Verification Integration Tests', () => {
       expect(res.body.code).toBe('AADHAAR_SESSION_EXPIRED');
 
       // Clean up customer B test record to preserve subsequent tests
+      db.public.none(`DELETE FROM customer_identity_verifications WHERE customer_id = '${customerB.id}';`);
+    });
+
+    it('rejects Sandbox callback when provider reports pending authorization (status: created)', async () => {
+      digiLockerProvider.setMockDelegate({
+        initiateSession: async () => ({ authorizationUrl: 'https://sandbox.co.in/auth', state: 's', provider: 'DIGILOCKER_SANDBOX', providerReferenceId: 'sess_pend' }),
+        getSessionStatus: async () => ({ status: 'created', isPending: true, isAuthorized: false, isCompleted: false }),
+      });
+
+      // Create a fresh pending session in DB
+      const initRes = await request(app)
+        .post('/api/v1/customers/me/aadhaar/initiate')
+        .set('Authorization', 'Bearer token-customer-b');
+      const sessId = initRes.body.data.state;
+
+      const res = await request(app)
+        .get('/api/v1/customers/aadhaar/callback')
+        .set('Accept', 'application/json')
+        .query({ session_id: 'sess_pend' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe('AADHAAR_SESSION_NOT_COMPLETED');
+
+      db.public.none(`DELETE FROM customer_identity_verifications WHERE customer_id = '${customerB.id}';`);
+    });
+
+    it('rejects Sandbox callback when provider reports authorization failed (status: failed)', async () => {
+      digiLockerProvider.setMockDelegate({
+        initiateSession: async () => ({ authorizationUrl: 'https://sandbox.co.in/auth', state: 's', provider: 'DIGILOCKER_SANDBOX', providerReferenceId: 'sess_failed' }),
+        getSessionStatus: async () => ({ status: 'failed', isFailed: true, isAuthorized: false, isCompleted: false }),
+      });
+
+      await request(app)
+        .post('/api/v1/customers/me/aadhaar/initiate')
+        .set('Authorization', 'Bearer token-customer-b');
+
+      const res = await request(app)
+        .get('/api/v1/customers/aadhaar/callback')
+        .set('Accept', 'application/json')
+        .query({ session_id: 'sess_failed' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe('AADHAAR_SESSION_FAILED');
+
+      db.public.none(`DELETE FROM customer_identity_verifications WHERE customer_id = '${customerB.id}';`);
+    });
+
+    it('rejects Sandbox callback when provider reports session expired (status: expired)', async () => {
+      digiLockerProvider.setMockDelegate({
+        initiateSession: async () => ({ authorizationUrl: 'https://sandbox.co.in/auth', state: 's', provider: 'DIGILOCKER_SANDBOX', providerReferenceId: 'sess_exp' }),
+        getSessionStatus: async () => ({ status: 'expired', isExpired: true, isAuthorized: false, isCompleted: false }),
+      });
+
+      await request(app)
+        .post('/api/v1/customers/me/aadhaar/initiate')
+        .set('Authorization', 'Bearer token-customer-b');
+
+      const res = await request(app)
+        .get('/api/v1/customers/aadhaar/callback')
+        .set('Accept', 'application/json')
+        .query({ session_id: 'sess_exp' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe('AADHAAR_SESSION_EXPIRED');
+
+      db.public.none(`DELETE FROM customer_identity_verifications WHERE customer_id = '${customerB.id}';`);
+    });
+
+    it('rejects Sandbox callback when documents_consented does not include aadhaar', async () => {
+      digiLockerProvider.setMockDelegate({
+        initiateSession: async () => ({ authorizationUrl: 'https://sandbox.co.in/auth', state: 's', provider: 'DIGILOCKER_SANDBOX', providerReferenceId: 'sess_nodoc' }),
+        getSessionStatus: async () => ({ status: 'succeeded', isAuthorized: true, isCompleted: true, documentsConsented: ['pan'] }),
+      });
+
+      await request(app)
+        .post('/api/v1/customers/me/aadhaar/initiate')
+        .set('Authorization', 'Bearer token-customer-b');
+
+      const res = await request(app)
+        .get('/api/v1/customers/aadhaar/callback')
+        .set('Accept', 'application/json')
+        .query({ session_id: 'sess_nodoc' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe('AADHAAR_CONSENT_MISSING');
+
       db.public.none(`DELETE FROM customer_identity_verifications WHERE customer_id = '${customerB.id}';`);
     });
   });

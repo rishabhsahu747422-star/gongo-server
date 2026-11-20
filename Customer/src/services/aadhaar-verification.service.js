@@ -326,13 +326,75 @@ class AadhaarVerificationService {
       // Confirm session status with Sandbox provider before document retrieval.
       if (typeof this.digiLockerProvider.getSessionStatus === 'function') {
         const sessionStatus = await this.digiLockerProvider.getSessionStatus(activeSessionId);
-        if (sessionStatus && !sessionStatus.isCompleted) {
+
+        if (sessionStatus && sessionStatus.isExpired) {
+          logger.warn('[AADHAAR_SERVICE] Sandbox session has expired', {
+            sessionId: activeSessionId,
+            status: sessionStatus.status,
+          });
+          await this.verificationRepository.updateVerification(verificationId, {
+            verificationStatus: AADHAAR_VERIFICATION_STATUS.EXPIRED,
+            errorDetails: { reason: 'Provider session expired', providerStatus: sessionStatus.status },
+          });
+          await this.verificationRepository.createAuditEvent({
+            verificationId,
+            customerId,
+            eventType: AUDIT_EVENT_TYPES.VERIFICATION_FAILED,
+            provider: verification.provider,
+            details: { step: 'PROVIDER_STATUS_CHECK', status: 'expired' },
+          });
+          throw new BadRequestError('DigiLocker verification session has expired', 'AADHAAR_SESSION_EXPIRED');
+        }
+
+        if (sessionStatus && sessionStatus.isFailed) {
+          logger.warn('[AADHAAR_SERVICE] Sandbox session authorization failed on provider', {
+            sessionId: activeSessionId,
+            status: sessionStatus.status,
+          });
+          await this.verificationRepository.updateVerification(verificationId, {
+            verificationStatus: AADHAAR_VERIFICATION_STATUS.FAILED,
+            errorDetails: { reason: 'Provider session status failed', providerStatus: sessionStatus.status },
+          });
+          await this.verificationRepository.createAuditEvent({
+            verificationId,
+            customerId,
+            eventType: AUDIT_EVENT_TYPES.VERIFICATION_FAILED,
+            provider: verification.provider,
+            details: { step: 'PROVIDER_STATUS_CHECK', status: sessionStatus.status },
+          });
+          throw new BadRequestError('DigiLocker authorization failed or was denied by the user', 'AADHAAR_SESSION_FAILED');
+        }
+
+        if (sessionStatus && (sessionStatus.isPending || (!sessionStatus.isAuthorized && !sessionStatus.isCompleted))) {
           logger.warn('[AADHAAR_SERVICE] Sandbox session authorization pending or incomplete', {
             sessionId: activeSessionId,
             status: sessionStatus.status,
           });
-          throw new BadRequestError(`DigiLocker session authorization is not completed (status: ${sessionStatus.status})`, 'AADHAAR_SESSION_NOT_COMPLETED');
+          throw new BadRequestError(`DigiLocker session authorization is not completed (status: ${sessionStatus.status || 'unknown'})`, 'AADHAAR_SESSION_NOT_COMPLETED');
         }
+
+        // Validate Aadhaar consent if documents_consented is reported by provider
+        if (sessionStatus && Array.isArray(sessionStatus.documentsConsented) && sessionStatus.documentsConsented.length > 0) {
+          const hasAadhaarConsent = sessionStatus.documentsConsented.some(
+            (doc) => String(doc).toLowerCase() === 'aadhaar'
+          );
+          if (!hasAadhaarConsent) {
+            logger.warn('[AADHAAR_SERVICE] Customer did not grant consent for Aadhaar document', {
+              sessionId: activeSessionId,
+              consented: sessionStatus.documentsConsented,
+            });
+            await this.verificationRepository.updateVerification(verificationId, {
+              verificationStatus: AADHAAR_VERIFICATION_STATUS.FAILED,
+              errorDetails: { reason: 'Aadhaar consent missing from consented documents', consented: sessionStatus.documentsConsented },
+            });
+            throw new BadRequestError('Consent for Aadhaar was not granted during DigiLocker authorization', 'AADHAAR_CONSENT_MISSING');
+          }
+        }
+
+        logger.info('[AADHAAR_SERVICE] Sandbox session authorization confirmed', {
+          sessionId: activeSessionId,
+          status: sessionStatus.status,
+        });
       }
     } else if (code) {
       // Direct Government DigiLocker OAuth flow
