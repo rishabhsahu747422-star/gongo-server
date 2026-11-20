@@ -58,6 +58,8 @@ describe('DigiLocker Aadhaar XML Verification Service Unit Tests', () => {
       findById: jest.fn(),
       findLatestByCustomerId: jest.fn(),
       updateVerification: jest.fn().mockImplementation((id, data) => Promise.resolve({ id, customerId, ...data })),
+      findByProviderReferenceId: jest.fn().mockResolvedValue(null),
+      query: jest.fn().mockResolvedValue({ rows: [] }),
       createAuditEvent: jest.fn().mockResolvedValue({ id: 'audit-1' }),
       findAuditsByVerificationId: jest.fn().mockResolvedValue([]),
     };
@@ -169,13 +171,18 @@ describe('DigiLocker Aadhaar XML Verification Service Unit Tests', () => {
 
   describe('2. Callback Handling & XML Storage', () => {
     beforeEach(() => {
-      // Mock Redis state lookup hit
-      mockRedis.get.mockResolvedValue(JSON.stringify({
-        verificationId,
-        customerId,
-        state: sampleState,
-        redirectUri: 'https://api.gongo.in/api/v1/customers/aadhaar/callback',
-      }));
+      // Mock Redis state lookup hit for valid sampleState
+      mockRedis.get.mockImplementation((key) => {
+        if (key && key.includes(sampleState)) {
+          return Promise.resolve(JSON.stringify({
+            verificationId,
+            customerId,
+            state: sampleState,
+            redirectUri: 'https://api.gongo.in/api/v1/customers/aadhaar/callback',
+          }));
+        }
+        return Promise.resolve(null);
+      });
 
       // Mock DB verification record
       mockVerificationRepo.findById.mockResolvedValue({
@@ -311,10 +318,31 @@ describe('DigiLocker Aadhaar XML Verification Service Unit Tests', () => {
       );
     });
 
-    it('rejects callback with sessionId alone without valid OAuth state', async () => {
+    it('rejects callback with unknown sessionId alone', async () => {
+      mockVerificationRepo.findByProviderReferenceId.mockResolvedValue(null);
       await expect(
-        service.handleCallback({ sessionId: 'digilocker_ref_123' })
+        service.handleCallback({ sessionId: 'unknown_ref_123' })
       ).rejects.toThrow(BadRequestError);
+    });
+
+    it('successfully processes callback with sessionId alone without state (Sandbox redirect)', async () => {
+      mockVerificationRepo.findByProviderReferenceId.mockResolvedValue({
+        id: verificationId,
+        customerId,
+        documentType: 'AADHAAR',
+        verificationStatus: AADHAAR_VERIFICATION_STATUS.IN_PROGRESS,
+        provider: AADHAAR_PROVIDERS.DIGILOCKER_SANDBOX,
+        providerReferenceId: 'digilocker_ref_123',
+        consentRecord: { consentGiven: true },
+        createdAt: new Date(),
+      });
+
+      const result = await service.handleCallback({
+        sessionId: 'digilocker_ref_123',
+      });
+
+      expect(result.status).toBe(AADHAAR_VERIFICATION_STATUS.VERIFIED);
+      expect(result.verificationId).toBe(verificationId);
     });
 
     it('rejects callback when sessionId mismatches the stored verification record', async () => {

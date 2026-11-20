@@ -47,7 +47,7 @@ class AadhaarController {
     try {
       const state = req.query.state || req.body?.state;
       const code = req.query.code || req.body?.code;
-      const sessionId = req.query.session_id || req.query.sessionId || req.body?.session_id;
+      const sessionId = req.query.session_id || req.query.sessionId || req.body?.session_id || req.body?.sessionId;
       const error = req.query.error || req.body?.error;
       const errorDescription = req.query.error_description || req.body?.error_description || req.query.errorDescription;
       const ipAddress = req.ip || req.headers['x-forwarded-for'];

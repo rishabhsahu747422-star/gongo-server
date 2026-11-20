@@ -134,6 +134,10 @@ describe('DigiLocker Aadhaar Verification Integration Tests', () => {
         maskedAadhaar: 'XXXX-XXXX-4321',
         isAuthorized: true,
       }),
+      getSessionStatus: async (sessionId) => ({
+        status: 'completed',
+        isCompleted: true,
+      }),
     });
 
     // 5. Configure mock Supabase storage
@@ -302,6 +306,51 @@ describe('DigiLocker Aadhaar Verification Integration Tests', () => {
       expect(res.status).toBe(400);
       expect(res.text).toContain('Verification Failed');
       expect(res.text).toContain('Return to GONGO App');
+    });
+
+    it('completes verification via Sandbox redirect with session_id query param and no state', async () => {
+      const res = await request(app)
+        .get('/api/v1/customers/aadhaar/callback')
+        .set('Accept', 'application/json')
+        .query({ session_id: 'digilocker_ref_integration_1' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.status).toBe('VERIFIED');
+    });
+
+    it('completes verification via POST callback with session_id in request body', async () => {
+      const res = await request(app)
+        .post('/api/v1/customers/aadhaar/callback')
+        .set('Accept', 'application/json')
+        .send({ session_id: 'digilocker_ref_integration_1' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.status).toBe('VERIFIED');
+    });
+
+    it('rejects callback if session has expired beyond TTL', async () => {
+      const initRes = await request(app)
+        .post('/api/v1/customers/me/aadhaar/initiate')
+        .set('Authorization', 'Bearer token-customer-b');
+      const expiredVerifId = initRes.body.data.verificationId;
+      const expiredState = initRes.body.data.state;
+
+      // Age this record beyond 15m
+      const expiredDate = new Date(Date.now() - 1000 * 60 * 30).toISOString();
+      db.public.none(`UPDATE customer_identity_verifications SET created_at = '${expiredDate}' WHERE id = '${expiredVerifId}';`);
+
+      const res = await request(app)
+        .get('/api/v1/customers/aadhaar/callback')
+        .set('Accept', 'application/json')
+        .query({ state: expiredState });
+
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe('AADHAAR_SESSION_EXPIRED');
+
+      // Clean up customer B test record to preserve subsequent tests
+      db.public.none(`DELETE FROM customer_identity_verifications WHERE customer_id = '${customerB.id}';`);
     });
   });
 

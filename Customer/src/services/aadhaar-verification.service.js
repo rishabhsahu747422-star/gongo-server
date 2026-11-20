@@ -177,39 +177,47 @@ class AadhaarVerificationService {
    * @returns {Promise<{ status: string, verificationId: string, message: string, maskedAadhaar?: string }>}
    */
   async handleCallback({ state, code, sessionId, error, errorDescription, ipAddress }) {
-    if (!state || typeof state !== 'string') {
-      throw new BadRequestError('Missing OAuth state parameter', 'AADHAAR_MISSING_STATE');
+    if ((!state || typeof state !== 'string') && (!sessionId || typeof sessionId !== 'string')) {
+      throw new BadRequestError('Missing OAuth state or session identifier', 'AADHAAR_MISSING_STATE');
     }
 
     // 1. Resolve session from Redis or Database
     let session = null;
-    if (this.redisClient && typeof this.redisClient.get === 'function') {
-      try {
-        const raw = await this.redisClient.get(AadhaarVerificationService.getStateKey(state));
-        if (raw) {
-          session = JSON.parse(raw);
-        }
-      } catch (redisErr) {
-        logger.warn('[AADHAAR_SERVICE] Redis state lookup failed, fallback to DB', { error: redisErr.message });
-      }
-    }
-
     let verification = null;
-    if (session && session.verificationId) {
-      verification = await this.verificationRepository.findById(session.verificationId);
-    }
 
-    if (!verification) {
-      // Fallback: check database by state token in consent_record
-      const text = `
-        SELECT * FROM customer_identity_verifications
-        WHERE consent_record->>'state' = $1
-        ORDER BY created_at DESC
-        LIMIT 1;
-      `;
-      const res = await this.verificationRepository.query(text, [state]);
-      if (res && res.rows && res.rows.length > 0) {
-        verification = CustomerIdentityVerificationRepository.mapRow(res.rows[0]);
+    if (state && typeof state === 'string') {
+      if (this.redisClient && typeof this.redisClient.get === 'function') {
+        try {
+          const raw = await this.redisClient.get(AadhaarVerificationService.getStateKey(state));
+          if (raw) {
+            session = JSON.parse(raw);
+          }
+        } catch (redisErr) {
+          logger.warn('[AADHAAR_SERVICE] Redis state lookup failed, fallback to DB', { error: redisErr.message });
+        }
+      }
+
+      if (session && session.verificationId) {
+        verification = await this.verificationRepository.findById(session.verificationId);
+      }
+
+      if (!verification && typeof this.verificationRepository.query === 'function') {
+        // Fallback: check database by state token in consent_record
+        const text = `
+          SELECT * FROM customer_identity_verifications
+          WHERE consent_record->>'state' = $1
+          ORDER BY created_at DESC
+          LIMIT 1;
+        `;
+        const res = await this.verificationRepository.query(text, [state]);
+        if (res && res.rows && res.rows.length > 0) {
+          verification = CustomerIdentityVerificationRepository.mapRow(res.rows[0]);
+        }
+      }
+    } else if (sessionId && typeof sessionId === 'string') {
+      // Sandbox redirect flow: provider redirects back with session_id query param
+      if (typeof this.verificationRepository.findByProviderReferenceId === 'function') {
+        verification = await this.verificationRepository.findByProviderReferenceId(sessionId);
       }
     }
 
@@ -217,7 +225,15 @@ class AadhaarVerificationService {
       throw new BadRequestError('Invalid or expired verification session', 'AADHAAR_INVALID_SESSION');
     }
 
-    // A supplied sessionId alone cannot authorize document retrieval; it must match the session associated with the validated state
+    // Check session timeout: session should not exceed STATE_TTL_SECONDS (15 minutes)
+    if (verification.createdAt) {
+      const sessionAgeSeconds = (Date.now() - new Date(verification.createdAt).getTime()) / 1000;
+      if (sessionAgeSeconds > AADHAAR_CONSTANTS.STATE_TTL_SECONDS) {
+        throw new BadRequestError('Verification session has expired', 'AADHAAR_SESSION_EXPIRED');
+      }
+    }
+
+    // A supplied sessionId alone cannot mismatch the session associated with the validated record
     if (sessionId && verification.providerReferenceId && sessionId !== verification.providerReferenceId) {
       throw new BadRequestError('Session ID does not match the stored verification session', 'AADHAAR_SESSION_MISMATCH');
     }
@@ -303,26 +319,19 @@ class AadhaarVerificationService {
 
     // 4. Token exchange (Direct OAuth flow) OR direct session retrieval (Sandbox flow)
     let tokenData = null;
-    const isSandboxMode = typeof this.digiLockerProvider.isSandboxCoInMode === 'function' && this.digiLockerProvider.isSandboxCoInMode();
+    const activeSessionId = sessionId || (verification.provider === AADHAAR_PROVIDERS.DIGILOCKER_SANDBOX ? verification.providerReferenceId : null);
 
-    if (isSandboxMode && (sessionId || verification.providerReferenceId)) {
+    if (!code && activeSessionId) {
       // In Sandbox KYC flow, Sandbox manages OAuth tokens internally.
       // Confirm session status with Sandbox provider before document retrieval.
-      const activeSessionId = sessionId || verification.providerReferenceId;
       if (typeof this.digiLockerProvider.getSessionStatus === 'function') {
-        try {
-          const sessionStatus = await this.digiLockerProvider.getSessionStatus(activeSessionId);
-          if (sessionStatus && !sessionStatus.isCompleted) {
-            logger.warn('[AADHAAR_SERVICE] Sandbox session authorization pending or incomplete', {
-              sessionId: activeSessionId,
-              status: sessionStatus.status,
-            });
-            throw new BadRequestError(`DigiLocker session authorization is not completed (status: ${sessionStatus.status})`, 'AADHAAR_SESSION_NOT_COMPLETED');
-          }
-        } catch (statusErr) {
-          if (statusErr.code === 'AADHAAR_SESSION_NOT_COMPLETED') {
-            throw statusErr;
-          }
+        const sessionStatus = await this.digiLockerProvider.getSessionStatus(activeSessionId);
+        if (sessionStatus && !sessionStatus.isCompleted) {
+          logger.warn('[AADHAAR_SERVICE] Sandbox session authorization pending or incomplete', {
+            sessionId: activeSessionId,
+            status: sessionStatus.status,
+          });
+          throw new BadRequestError(`DigiLocker session authorization is not completed (status: ${sessionStatus.status})`, 'AADHAAR_SESSION_NOT_COMPLETED');
         }
       }
     } else if (code) {
@@ -364,9 +373,9 @@ class AadhaarVerificationService {
     // 5. Fetch Aadhaar XML document from DigiLocker or Sandbox
     let docData;
     try {
-      const fetchParams = (isSandboxMode || !tokenData?.accessToken)
-        ? { sessionId: sessionId || verification.providerReferenceId }
-        : { accessToken: tokenData.accessToken };
+      const fetchParams = tokenData?.accessToken
+        ? { accessToken: tokenData.accessToken }
+        : { sessionId: activeSessionId };
       docData = await this.digiLockerProvider.fetchAadhaarXml(fetchParams);
       await this.verificationRepository.createAuditEvent({
         verificationId,
