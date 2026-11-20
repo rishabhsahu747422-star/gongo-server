@@ -31,8 +31,9 @@ class CustomerService {
    * @param {string|null} [avatarUrl=null] - Presigned avatar URL
    * @returns {object} Safe client-facing profile DTO
    */
-  static formatProfileDto(user, drivingLicenseDoc = null, avatarUrl = null) {
+  static formatProfileDto(user, drivingLicenseDoc = null, avatarUrl = null, aadhaarDoc = null) {
     const drivingLicenseStatus = drivingLicenseDoc ? drivingLicenseDoc.status : 'NOT_SUBMITTED';
+    const aadhaarStatus = aadhaarDoc ? (aadhaarDoc.verificationStatus || aadhaarDoc.status || 'NOT_SUBMITTED') : 'NOT_SUBMITTED';
     const isProfileComplete = Boolean(user.name && user.email && user.phone);
 
     return {
@@ -49,6 +50,7 @@ class CustomerService {
       verificationStatus: {
         isProfileComplete,
         drivingLicenseStatus,
+        aadhaarStatus,
       },
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
@@ -90,7 +92,8 @@ class CustomerService {
     }
 
     const dlDoc = await this.documentRepository.findLatestByUserAndType(userId, 'DRIVING_LICENSE');
-    return CustomerService.formatProfileDto(user, dlDoc, avatarUrl);
+    const aadhaarDoc = await this.documentRepository.findLatestByUserAndType(userId, 'AADHAAR');
+    return CustomerService.formatProfileDto(user, dlDoc, avatarUrl, aadhaarDoc);
   }
 
   /**
@@ -157,7 +160,8 @@ class CustomerService {
 
     // 4. Retrieve document status and return safe profile DTO
     const dlDoc = await this.documentRepository.findLatestByUserAndType(userId, 'DRIVING_LICENSE');
-    return CustomerService.formatProfileDto(updatedUser, dlDoc, avatarUrl);
+    const aadhaarDoc = await this.documentRepository.findLatestByUserAndType(userId, 'AADHAAR');
+    return CustomerService.formatProfileDto(updatedUser, dlDoc, avatarUrl, aadhaarDoc);
   }
 
   /**

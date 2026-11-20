@@ -22,8 +22,19 @@ router.use('/auth', authRouter);
 // Customer Profile & Account
 const customerRouter = require('./customers');
 const paymentController = require('../controllers/payment.controller');
+const aadhaarController = require('../controllers/aadhaar.controller').defaultController;
 
 router.use(['/customers', '/customer/customers'], customerRouter);
+
+// DigiLocker Aadhaar Callback direct gateway alias
+router.get(
+  ['/aadhaar/callback', '/customer/aadhaar/callback'],
+  (req, res, next) => aadhaarController.handleCallback(req, res, next),
+);
+router.post(
+  ['/aadhaar/callback', '/customer/aadhaar/callback'],
+  (req, res, next) => aadhaarController.handleCallback(req, res, next),
+);
 
 // Vehicle Discovery (Step 6)
 router.use(['/vehicles', '/customer/vehicles'], require('./vehicles'));

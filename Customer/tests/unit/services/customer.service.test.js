@@ -72,6 +72,7 @@ describe('CustomerService Unit Tests', () => {
         verificationStatus: {
           isProfileComplete: true,
           drivingLicenseStatus: 'VERIFIED',
+          aadhaarStatus: 'VERIFIED',
         },
         createdAt: mockUser.createdAt,
         updatedAt: mockUser.updatedAt,

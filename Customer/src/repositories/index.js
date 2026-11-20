@@ -9,6 +9,7 @@ const VehicleRepository = require('./vehicle.repository');
 const BookingRepository = require('./booking.repository');
 const IdempotencyRepository = require('./idempotency.repository');
 const PlatformFeeRepository = require('./platform-fee.repository');
+const CustomerIdentityVerificationRepository = require('./customer-identity-verification.repository');
 
 module.exports = {
   BaseRepository,
@@ -20,4 +21,5 @@ module.exports = {
   BookingRepository,
   IdempotencyRepository,
   PlatformFeeRepository,
+  CustomerIdentityVerificationRepository,
 };

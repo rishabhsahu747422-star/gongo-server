@@ -31,8 +31,16 @@ const {
   validateAvatarUploadUrl,
   validateAvatarCompletion,
 } = require('../validators/storage.validator');
+const aadhaarController = require('../controllers/aadhaar.controller').defaultController;
 
 const router = express.Router();
+
+/**
+ * Public DigiLocker OAuth Callback Endpoints
+ * (Must precede authentication middleware)
+ */
+router.get('/aadhaar/callback', (req, res, next) => aadhaarController.handleCallback(req, res, next));
+router.post('/aadhaar/callback', (req, res, next) => aadhaarController.handleCallback(req, res, next));
 
 /**
  * All customer endpoints require:
@@ -109,6 +117,38 @@ router.post(
   '/me/avatar',
   validateAvatarCompletion,
   (req, res, next) => customerController.completeAvatarUpload(req, res, next),
+);
+
+// ── DigiLocker Aadhaar Verification ──────────────────────────────────────────
+
+/**
+ * @route   POST /api/v1/customers/me/aadhaar/initiate
+ * @desc    Initiate DigiLocker Aadhaar verification session
+ * @access  Private (Customer only)
+ */
+router.post(
+  '/me/aadhaar/initiate',
+  (req, res, next) => aadhaarController.initiateVerification(req, res, next),
+);
+
+/**
+ * @route   GET /api/v1/customers/me/aadhaar/status
+ * @desc    Get customer's authoritative Aadhaar verification status
+ * @access  Private (Customer only)
+ */
+router.get(
+  '/me/aadhaar/status',
+  (req, res, next) => aadhaarController.getStatus(req, res, next),
+);
+
+/**
+ * @route   GET /api/v1/customers/me/aadhaar/:verificationId/signed-url
+ * @desc    Generate short-lived signed URL for authorized customer to view verified document
+ * @access  Private (Customer only)
+ */
+router.get(
+  '/me/aadhaar/:verificationId/signed-url',
+  (req, res, next) => aadhaarController.getSignedUrl(req, res, next),
 );
 
 // ── Saved Addresses ──────────────────────────────────────────────────────────

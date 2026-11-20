@@ -309,6 +309,49 @@ const env = cleanEnv(process.env, {
     docs: 'Webhook endpoint URL for Cashfree payment status events.',
   }),
 
+  // ── DigiLocker & Aadhaar Verification ───────────────────────
+  SANDBOX_API_KEY: str({
+    default: '',
+    docs: 'Sandbox.co.in API Key (x-api-key) for KYC DigiLocker service',
+  }),
+  SANDBOX_API_SECRET: str({
+    default: '',
+    docs: 'Sandbox.co.in API Secret (x-api-secret) for KYC DigiLocker service',
+  }),
+  SANDBOX_API_VERSION: str({
+    default: '1.0.0',
+    docs: 'Sandbox.co.in API Version header (default: 1.0.0)',
+  }),
+  DIGILOCKER_CLIENT_ID: str({
+    default: 'test_digilocker_client_id',
+    docs: 'DigiLocker API client ID / API key',
+  }),
+  DIGILOCKER_CLIENT_SECRET: str({
+    default: 'test_digilocker_client_secret',
+    docs: 'DigiLocker API client secret',
+  }),
+  DIGILOCKER_ENV: str({
+    choices: ['SANDBOX', 'PRODUCTION', 'sandbox', 'production'],
+    default: 'SANDBOX',
+    docs: 'DigiLocker environment mode (SANDBOX or PRODUCTION).',
+  }),
+  DIGILOCKER_API_BASE_URL: str({
+    default: 'https://api.digitallocker.gov.in',
+    docs: 'Base URL for DigiLocker API endpoints.',
+  }),
+  DIGILOCKER_REDIRECT_URI: str({
+    default: '',
+    docs: 'Explicit DigiLocker callback URI override. Defaults to BACKEND_PUBLIC_URL + /api/v1/customers/aadhaar/callback',
+  }),
+  AADHAAR_XML_RETENTION_ENABLED: bool({
+    default: true,
+    docs: 'Controls whether verified Aadhaar XML files are stored in Supabase Storage. Set false if retention is legally prohibited or disabled.',
+  }),
+  AADHAAR_STORAGE_BUCKET: str({
+    default: 'customer-identity-documents',
+    docs: 'Private Supabase Storage bucket for storing verified Aadhaar XML files.',
+  }),
+
   // ── Development Auth Tokens (dev-token-<phone>) ──────────────
   CUSTOMER_DEV_AUTH_ENABLED: bool({
     default: false,

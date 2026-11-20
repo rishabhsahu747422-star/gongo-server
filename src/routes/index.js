@@ -84,7 +84,7 @@ router.use(['/api/v1/auth', '/api/auth'], (req, res, next) => {
 });
 
 // D. Customer Gateway Aliases (/api/v1/customers, /api/v1/bookings, /api/v1/vehicles, etc.)
-router.use('/api/v1/customers', forwardTo(customerApp));
+router.use(['/api/v1/customers', '/customers'], forwardTo(customerApp));
 router.use('/api/v1/bookings', forwardTo(customerApp));
 router.use('/api/v1/vehicles', forwardTo(customerApp));
 router.use('/api/v1/pricing', forwardTo(customerApp));
@@ -93,5 +93,6 @@ router.use('/api/v1/payments', forwardTo(customerApp));
 router.use(['/api/v1/platform-fee', '/customer/platform-fee'], forwardTo(customerApp));
 router.use('/api/v1/banners', forwardTo(customerApp));
 router.use('/api/v1/offers', forwardTo(customerApp));
+router.use(['/api/v1/aadhaar', '/aadhaar'], forwardTo(customerApp));
 
 module.exports = router;
