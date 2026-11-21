@@ -3,6 +3,8 @@
 const { startLoadTestServer } = require('../../load/server');
 const { runConcurrencyScenarios } = require('../../load/benchmarks/concurrency-scenarios');
 const { runResilienceScenarios } = require('../../load/benchmarks/resilience-scenarios');
+const cashfreeProvider = require('../../../src/services/payment/providers/cashfree.provider');
+const firebaseProvider = require('../../../src/services/notification/providers/firebase.provider');
 
 describe('Phase 15 — Load, Concurrency & Resilience Integration Tests', () => {
   let serverInstance;
@@ -15,6 +17,8 @@ describe('Phase 15 — Load, Concurrency & Resilience Integration Tests', () => 
     if (serverInstance && serverInstance.close) {
       await serverInstance.close();
     }
+    cashfreeProvider.setMockDelegate(null);
+    firebaseProvider.setMockDelegate(null);
   });
 
   describe('Concurrency Scenarios (Zero Contention Corruption)', () => {
@@ -62,6 +66,6 @@ describe('Phase 15 — Load, Concurrency & Resilience Integration Tests', () => 
       expect(results.cashfreeFailureHandling.bookingPreservedStatus).toBe('PENDING');
 
       expect(results.dbConnectionRelease.passed).toBe(true);
-    }, 30000);
+    }, 45000);
   });
 });

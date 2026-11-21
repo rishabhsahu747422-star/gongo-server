@@ -109,6 +109,7 @@ class StorageService {
       key: storageKey,
       contentType,
       expiresInSeconds: UPLOAD_SESSION_TTL_SECONDS,
+      bucket: env.CUSTOMER_STORAGE_BUCKET || 'gongo-customers',
     });
 
     // 4. Save session in Redis
@@ -135,7 +136,7 @@ class StorageService {
       );
     }
 
-    const bucket = env.SUPABASE_STORAGE_BUCKET || env.AWS_S3_BUCKET || 'gongo-uploads';
+    const bucket = env.CUSTOMER_STORAGE_BUCKET || 'gongo-customers';
     const region = env.AWS_REGION || 'ap-south-1';
     logger.info('[KYC_BACKEND_TRACE] Generated presigned document upload URL', {
       endpoint: 'POST /api/v1/customers/me/documents/upload-url',
@@ -475,6 +476,7 @@ class StorageService {
       key: storageKey,
       contentType,
       expiresInSeconds: UPLOAD_SESSION_TTL_SECONDS,
+      bucket: env.CUSTOMER_STORAGE_BUCKET || 'gongo-customers',
     });
 
     const uploadId = crypto.randomUUID();
@@ -629,6 +631,7 @@ class StorageService {
       const presignedGet = await this.s3Provider.createPresignedGetUrl({
         key: session.storageKey,
         expiresInSeconds: 3600,
+        bucket: env.CUSTOMER_STORAGE_BUCKET || 'gongo-customers',
       });
       avatarUrl = presignedGet.downloadUrl;
       if (avatarUrl && updatedUser?.updatedAt) {

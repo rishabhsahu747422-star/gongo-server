@@ -97,7 +97,7 @@ describe('DigiLocker Aadhaar XML Verification Service Unit Tests', () => {
     };
 
     mockStorageBucket = {
-      upload: jest.fn().mockResolvedValue({ data: { path: `${customerId}/aadhaar/${verificationId}.xml` }, error: null }),
+      upload: jest.fn().mockResolvedValue({ data: { path: `customers/${customerId}/aadhaar/${verificationId}.xml` }, error: null }),
       createSignedUrl: jest.fn().mockResolvedValue({ data: { signedUrl: 'https://storage.supabase.local/signed-url' }, error: null }),
     };
 
@@ -218,10 +218,10 @@ describe('DigiLocker Aadhaar XML Verification Service Unit Tests', () => {
         accessToken: 'mock_access_token_xyz',
       });
 
-      // Supabase Storage upload called with private bucket and server-generated path
-      expect(mockSupabase.storage.from).toHaveBeenCalledWith('customer-identity-documents');
+      // Supabase Storage upload called with configured bucket and server-generated path
+      expect(mockSupabase.storage.from).toHaveBeenCalledWith('gongo-customers');
       expect(mockStorageBucket.upload).toHaveBeenCalledWith(
-        `${customerId}/aadhaar/${verificationId}.xml`,
+        `customers/${customerId}/aadhaar/${verificationId}.xml`,
         expect.any(Buffer),
         expect.objectContaining({ contentType: 'application/xml', upsert: true })
       );
@@ -231,8 +231,8 @@ describe('DigiLocker Aadhaar XML Verification Service Unit Tests', () => {
         verificationId,
         expect.objectContaining({
           verificationStatus: AADHAAR_VERIFICATION_STATUS.VERIFIED,
-          storageBucket: 'customer-identity-documents',
-          storagePath: `${customerId}/aadhaar/${verificationId}.xml`,
+          storageBucket: 'gongo-customers',
+          storagePath: `customers/${customerId}/aadhaar/${verificationId}.xml`,
         })
       );
 
@@ -251,6 +251,38 @@ describe('DigiLocker Aadhaar XML Verification Service Unit Tests', () => {
           verificationId,
           customerId,
           eventType: AUDIT_EVENT_TYPES.VERIFICATION_COMPLETED,
+        })
+      );
+    });
+
+    it('respects configured storageBucket (e.g. custom-customer-bucket) and uploads to customers/<customerId>/aadhaar/<verificationId>.xml', async () => {
+      const customService = new AadhaarVerificationService({
+        customerRepo: mockCustomerRepo,
+        documentRepo: mockDocumentRepo,
+        verificationRepo: mockVerificationRepo,
+        digilocker: mockDigiLocker,
+        redis: mockRedis,
+        supabase: () => mockSupabase,
+        storageBucket: 'custom-customer-bucket',
+      });
+
+      await customService.handleCallback({
+        state: sampleState,
+        code: 'valid_auth_code_123',
+      });
+
+      expect(mockSupabase.storage.from).toHaveBeenCalledWith('custom-customer-bucket');
+      expect(mockStorageBucket.upload).toHaveBeenCalledWith(
+        `customers/${customerId}/aadhaar/${verificationId}.xml`,
+        expect.any(Buffer),
+        expect.objectContaining({ contentType: 'application/xml', upsert: true })
+      );
+      expect(mockVerificationRepo.updateVerification).toHaveBeenCalledWith(
+        verificationId,
+        expect.objectContaining({
+          verificationStatus: AADHAAR_VERIFICATION_STATUS.VERIFIED,
+          storageBucket: 'custom-customer-bucket',
+          storagePath: `customers/${customerId}/aadhaar/${verificationId}.xml`,
         })
       );
     });
@@ -533,6 +565,84 @@ describe('DigiLocker Aadhaar XML Verification Service Unit Tests', () => {
         })
       );
     });
+
+    it('handles bucket missing error (Bucket not found, 404) preserving internal cause', async () => {
+      const bucketError = { message: 'Bucket not found', statusCode: 404, error: 'Bucket not found' };
+      mockStorageBucket.upload.mockResolvedValue({ data: null, error: bucketError });
+
+      let caughtErr;
+      try {
+        await service.handleCallback({
+          state: sampleState,
+          code: 'valid_auth_code_123',
+        });
+      } catch (err) {
+        caughtErr = err;
+      }
+
+      expect(caughtErr).toBeDefined();
+      expect(caughtErr.message).toBe('Failed to persist identity document to secure storage');
+      expect(caughtErr.code).toBe('STORAGE_UPLOAD_ERROR');
+      expect(caughtErr.cause).toEqual(bucketError);
+      expect(caughtErr.httpStatus).toBe(404);
+
+      // Verify DB record marked FAILED and audit event recorded
+      expect(mockVerificationRepo.updateVerification).toHaveBeenCalledWith(
+        verificationId,
+        expect.objectContaining({
+          verificationStatus: AADHAAR_VERIFICATION_STATUS.FAILED,
+          errorDetails: expect.objectContaining({
+            reason: 'Storage upload failed',
+            storageErrorCode: 'Bucket not found',
+          }),
+        })
+      );
+      expect(mockVerificationRepo.createAuditEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: AUDIT_EVENT_TYPES.VERIFICATION_FAILED,
+          details: expect.objectContaining({ step: 'STORAGE_UPLOAD' }),
+        })
+      );
+    });
+
+    it('handles storage client unavailable without skipping upload or marking as VERIFIED', async () => {
+      const brokenService = new AadhaarVerificationService({
+        customerRepo: mockCustomerRepo,
+        documentRepo: mockDocumentRepo,
+        verificationRepo: mockVerificationRepo,
+        digilocker: mockDigiLocker,
+        redis: mockRedis,
+        supabase: () => ({ storage: null }), // storage client missing
+      });
+
+      await expect(
+        brokenService.handleCallback({
+          state: sampleState,
+          code: 'valid_auth_code_123',
+        })
+      ).rejects.toThrow(ServiceUnavailableError);
+
+      expect(mockVerificationRepo.updateVerification).toHaveBeenCalledWith(
+        verificationId,
+        expect.objectContaining({
+          verificationStatus: AADHAAR_VERIFICATION_STATUS.FAILED,
+        })
+      );
+    });
+
+    it('does not mark customer VERIFIED if database persistence fails after upload', async () => {
+      mockVerificationRepo.updateVerification.mockRejectedValueOnce(new Error('Database write constraint failed'));
+
+      await expect(
+        service.handleCallback({
+          state: sampleState,
+          code: 'valid_auth_code_123',
+        })
+      ).rejects.toThrow('Database write constraint failed');
+
+      // Customer document creation must not have been reached
+      expect(mockDocumentRepo.create).not.toHaveBeenCalled();
+    });
   });
 
   describe('3. XML Structure Validation & Data Sanitization', () => {
@@ -643,8 +753,8 @@ describe('DigiLocker Aadhaar XML Verification Service Unit Tests', () => {
         id: verificationId,
         customerId,
         verificationStatus: AADHAAR_VERIFICATION_STATUS.VERIFIED,
-        storageBucket: 'customer-identity-documents',
-        storagePath: `${customerId}/aadhaar/${verificationId}.xml`,
+        storageBucket: 'gongo-customers',
+        storagePath: `customers/${customerId}/aadhaar/${verificationId}.xml`,
       });
 
       const res = await service.getSignedDocumentUrl(customerId, verificationId);
@@ -657,7 +767,7 @@ describe('DigiLocker Aadhaar XML Verification Service Unit Tests', () => {
         id: verificationId,
         customerId: otherCustomerId, // Owned by another customer!
         verificationStatus: AADHAAR_VERIFICATION_STATUS.VERIFIED,
-        storagePath: `${otherCustomerId}/aadhaar/${verificationId}.xml`,
+        storagePath: `customers/${otherCustomerId}/aadhaar/${verificationId}.xml`,
       });
 
       await expect(service.getSignedDocumentUrl(customerId, verificationId)).rejects.toThrow(ForbiddenError);

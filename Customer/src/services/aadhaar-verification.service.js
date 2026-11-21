@@ -42,6 +42,7 @@ class AadhaarVerificationService {
     digilocker = defaultDigiLockerProvider,
     redis = redisClient,
     supabase = getSupabaseAdmin,
+    storageBucket = env.AADHAAR_STORAGE_BUCKET || AADHAAR_CONSTANTS.DEFAULT_STORAGE_BUCKET,
   } = {}) {
     this.customerRepository = customerRepo;
     this.documentRepository = documentRepo;
@@ -49,6 +50,7 @@ class AadhaarVerificationService {
     this.digiLockerProvider = digilocker;
     this.redisClient = redis;
     this.getSupabase = supabase;
+    this.storageBucket = storageBucket;
   }
 
   /**
@@ -470,48 +472,101 @@ class AadhaarVerificationService {
     const isRetentionPermitted = env.AADHAAR_XML_RETENTION_ENABLED;
 
     if (isRetentionPermitted && docData.xmlContent) {
-      storageBucket = env.AADHAAR_STORAGE_BUCKET || AADHAAR_CONSTANTS.DEFAULT_STORAGE_BUCKET;
-      storagePath = `${customerId}/aadhaar/${verificationId}.xml`;
+      storageBucket = this.storageBucket || env.AADHAAR_STORAGE_BUCKET || AADHAAR_CONSTANTS.DEFAULT_STORAGE_BUCKET;
+      storagePath = `customers/${customerId}/aadhaar/${verificationId}.xml`;
 
       try {
         const client = typeof this.getSupabase === 'function' ? this.getSupabase() : this.getSupabase;
-        if (client && client.storage) {
-          const xmlBuffer = Buffer.from(docData.xmlContent, 'utf8');
-          const { error: uploadErr } = await client.storage
-            .from(storageBucket)
-            .upload(storagePath, xmlBuffer, {
-              contentType: 'application/xml',
-              upsert: true,
-            });
-
-          if (uploadErr) {
-            logger.error('[AADHAAR_SERVICE] Supabase Storage upload failed', {
-              customerId,
-              verificationId,
-              storageBucket,
-              storagePath,
-              error: uploadErr.message,
-            });
-            throw new ServiceUnavailableError('Failed to persist identity document to secure storage', 'STORAGE_UPLOAD_ERROR');
-          }
-
-          await this.verificationRepository.createAuditEvent({
-            verificationId,
+        if (!client || !client.storage) {
+          logger.error('[AADHAAR_SERVICE] Secure storage client unavailable', {
+            operation: 'uploadIdentityDocument',
+            provider: 'supabase',
+            correlationId: verificationId,
             customerId,
-            eventType: AUDIT_EVENT_TYPES.STORAGE_PERSISTED,
-            provider: verification.provider,
-            details: {
-              storageBucket,
-              storagePath,
-              sizeBytes: xmlBuffer.length,
-            },
           });
+          throw new ServiceUnavailableError(
+            'Failed to persist identity document to secure storage',
+            'STORAGE_CLIENT_UNAVAILABLE'
+          );
         }
+
+        const xmlBuffer = Buffer.from(docData.xmlContent, 'utf8');
+        const { error: uploadErr } = await client.storage
+          .from(storageBucket)
+          .upload(storagePath, xmlBuffer, {
+            contentType: 'application/xml',
+            upsert: true,
+          });
+
+        if (uploadErr) {
+          const rawStatus = uploadErr.statusCode || uploadErr.status || (uploadErr.error && uploadErr.error.statusCode);
+          const httpStatus = rawStatus ? Number(rawStatus) || 500 : 500;
+          const storageErrorCode = uploadErr.error || uploadErr.code || uploadErr.name || 'STORAGE_ERROR';
+
+          logger.error('[AADHAAR_SERVICE] Secure storage upload failed', {
+            operation: 'uploadIdentityDocument',
+            provider: 'supabase',
+            bucket: storageBucket,
+            path: storagePath,
+            httpStatus,
+            errorCode: storageErrorCode,
+            errorMessage: uploadErr.message,
+            correlationId: verificationId,
+            customerId,
+          });
+
+          const storageError = new ServiceUnavailableError(
+            'Failed to persist identity document to secure storage',
+            'STORAGE_UPLOAD_ERROR'
+          );
+          storageError.cause = uploadErr;
+          storageError.httpStatus = httpStatus;
+          storageError.storageErrorCode = storageErrorCode;
+          throw storageError;
+        }
+
+        await this.verificationRepository.createAuditEvent({
+          verificationId,
+          customerId,
+          eventType: AUDIT_EVENT_TYPES.STORAGE_PERSISTED,
+          provider: verification.provider,
+          details: {
+            storageBucket,
+            storagePath,
+            sizeBytes: xmlBuffer.length,
+          },
+        });
       } catch (storageErr) {
+        logger.warn('[AADHAAR_SERVICE] Identity document storage persistence failed, updating session status', {
+          operation: 'uploadIdentityDocument',
+          correlationId: verificationId,
+          customerId,
+          error: storageErr.message,
+          code: storageErr.code,
+        });
+
         await this.verificationRepository.updateVerification(verificationId, {
           verificationStatus: AADHAAR_VERIFICATION_STATUS.FAILED,
-          errorDetails: { reason: 'Storage upload failed', message: storageErr.message },
+          errorDetails: {
+            reason: 'Storage upload failed',
+            message: storageErr.message,
+            code: storageErr.code,
+            storageErrorCode: storageErr.storageErrorCode || null,
+          },
         });
+
+        await this.verificationRepository.createAuditEvent({
+          verificationId,
+          customerId,
+          eventType: AUDIT_EVENT_TYPES.VERIFICATION_FAILED,
+          provider: verification.provider,
+          details: {
+            step: 'STORAGE_UPLOAD',
+            error: storageErr.message,
+            code: storageErr.code,
+          },
+        });
+
         throw storageErr;
       }
     } else if (!isRetentionPermitted) {
@@ -659,7 +714,7 @@ class AadhaarVerificationService {
     }
 
     const client = typeof this.getSupabase === 'function' ? this.getSupabase() : this.getSupabase;
-    const bucket = verification.storageBucket || env.AADHAAR_STORAGE_BUCKET || AADHAAR_CONSTANTS.DEFAULT_STORAGE_BUCKET;
+    const bucket = verification.storageBucket || this.storageBucket || env.AADHAAR_STORAGE_BUCKET || AADHAAR_CONSTANTS.DEFAULT_STORAGE_BUCKET;
     const expirySeconds = 60; // 60 seconds short-lived URL
 
     const { data, error } = await client.storage

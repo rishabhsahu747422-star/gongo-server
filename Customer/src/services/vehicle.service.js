@@ -103,14 +103,22 @@ class VehicleService {
    */
   static async resolveImageUrl(storageKey) {
     if (!storageKey || typeof storageKey !== 'string') return null;
-    if (storageKey.startsWith('http://') || storageKey.startsWith('https://')) {
+
+    let keyToResolve = storageKey;
+    let targetBucket = null;
+    const publicMatch = storageKey.match(/\/storage\/v1\/object\/public\/(gongo-uploads|gongo-partner-documents)\/(.+)$/);
+    if (publicMatch) {
+      targetBucket = publicMatch[1];
+      keyToResolve = publicMatch[2];
+    } else if (storageKey.startsWith('http://') || storageKey.startsWith('https://')) {
       return storageKey;
     }
-    const candidateBuckets = ['gongo-uploads', 'gongo-partner-documents'];
+
+    const candidateBuckets = targetBucket ? [targetBucket] : ['gongo-uploads', 'gongo-partner-documents'];
     for (const bucket of candidateBuckets) {
       try {
         const presigned = await createPresignedGetUrl({
-          key: storageKey,
+          key: keyToResolve.replace(/^\/+/, ''),
           bucket,
           expiresInSeconds: 86400,
         });

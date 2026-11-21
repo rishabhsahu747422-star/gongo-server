@@ -4,6 +4,11 @@ const { getSupabaseClient } = require('./supabase');
 const env = require('../config/env');
 const logger = require('../config/logger');
 
+function isCustomerPath(path) {
+  if (!path) return false;
+  return path.startsWith('customers/') || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/(profile|aadhar-card|DL|others|documents|photo|aadhaar)/i.test(path);
+}
+
 let mockStorageProvider = null;
 
 function setMockStorageProvider(mock) {
@@ -27,7 +32,8 @@ async function createPresignedUploadUrl({ bucket, path }) {
     return mockStorageProvider.createPresignedUploadUrl({ bucket, path });
   }
 
-  const targetBucket = bucket || env.SUPABASE_STORAGE_BUCKET || 'gongo-uploads';
+  const targetBucket = bucket
+    || (isCustomerPath(path) ? 'gongo-customers' : (env.SUPABASE_STORAGE_BUCKET || 'gongo-uploads'));
   const targetPath = path || `uploads/${Date.now()}`;
 
   try {
@@ -75,7 +81,8 @@ async function createPresignedDownloadUrl({ bucket, path, expiresInSeconds = 300
     return mockStorageProvider.createPresignedDownloadUrl({ bucket, path, expiresInSeconds });
   }
 
-  const targetBucket = bucket || env.SUPABASE_STORAGE_BUCKET || 'gongo-uploads';
+  const targetBucket = bucket
+    || (isCustomerPath(path) ? 'gongo-customers' : (env.SUPABASE_STORAGE_BUCKET || 'gongo-uploads'));
 
   try {
     const supabase = getSupabaseClient();
@@ -107,6 +114,10 @@ async function createPresignedDownloadUrl({ bucket, path, expiresInSeconds = 300
  * @returns {string} Public URL
  */
 function getPublicUrl(path, bucket) {
+  if (isCustomerPath(path)) {
+    logger.error('CRITICAL: Refusing to generate public URL for private customer object', { path });
+    return '';
+  }
   const targetBucket = bucket || env.SUPABASE_STORAGE_BUCKET || 'gongo-uploads';
   const supabase = getSupabaseClient();
   const { data } = supabase.storage.from(targetBucket).getPublicUrl(path);

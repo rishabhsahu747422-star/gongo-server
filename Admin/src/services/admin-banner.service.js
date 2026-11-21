@@ -24,7 +24,39 @@ class AdminBannerService {
    * Lists all banners with optional filtering.
    */
   async listBanners(query = {}) {
-    return this.bannerRepo.listBanners(query);
+    const result = await this.bannerRepo.listBanners(query);
+    if (result && Array.isArray(result.items)) {
+      result.items = await Promise.all(
+        result.items.map(async (banner) => {
+          const raw = banner.storage_path || banner.asset_url;
+          const targetBucket = env.SUPABASE_STORAGE_BUCKET || 'gongo-uploads';
+          const isSupabasePublicUrl = typeof raw === 'string' && raw.includes(`/storage/v1/object/public/${targetBucket}/`);
+          let key = null;
+          if (isSupabasePublicUrl) {
+            key = raw.split(`/storage/v1/object/public/${targetBucket}/`)[1];
+          } else if (banner.storage_path) {
+            key = banner.storage_path;
+          } else if (typeof raw === 'string' && !raw.startsWith('http://') && !raw.startsWith('https://')) {
+            key = raw;
+          }
+
+          if (key) {
+            try {
+              const presigned = await supabaseStorage.createPresignedDownloadUrl({
+                bucket: targetBucket,
+                path: key.replace(/^\/+/, ''),
+                expiresInSeconds: 86400,
+              });
+              if (presigned?.downloadUrl) {
+                return { ...banner, asset_url: presigned.downloadUrl, assetUrl: presigned.downloadUrl };
+              }
+            } catch (_) {}
+          }
+          return banner;
+        })
+      );
+    }
+    return result;
   }
 
   /**
@@ -34,6 +66,30 @@ class AdminBannerService {
     const banner = await this.bannerRepo.findBannerById(id);
     if (!banner) {
       throw new NotFoundError(`Banner '${id}' not found`, ERROR_CODES.NOT_FOUND);
+    }
+    const raw = banner.storage_path || banner.asset_url;
+    const targetBucket = env.SUPABASE_STORAGE_BUCKET || 'gongo-uploads';
+    const isSupabasePublicUrl = typeof raw === 'string' && raw.includes(`/storage/v1/object/public/${targetBucket}/`);
+    let key = null;
+    if (isSupabasePublicUrl) {
+      key = raw.split(`/storage/v1/object/public/${targetBucket}/`)[1];
+    } else if (banner.storage_path) {
+      key = banner.storage_path;
+    } else if (typeof raw === 'string' && !raw.startsWith('http://') && !raw.startsWith('https://')) {
+      key = raw;
+    }
+
+    if (key) {
+      try {
+        const presigned = await supabaseStorage.createPresignedDownloadUrl({
+          bucket: targetBucket,
+          path: key.replace(/^\/+/, ''),
+          expiresInSeconds: 86400,
+        });
+        if (presigned?.downloadUrl) {
+          return { ...banner, asset_url: presigned.downloadUrl, assetUrl: presigned.downloadUrl };
+        }
+      } catch (_) {}
     }
     return banner;
   }
@@ -71,8 +127,18 @@ class AdminBannerService {
       logger.warn('Storage upload exception in banner service', { error: err.message });
     }
 
-    // 3. Resolve public or permanent storage URL
-    const assetUrl = supabaseStorage.getPublicUrl(storagePath, targetBucket);
+    // 3. Resolve private presigned storage URL
+    let assetUrl;
+    try {
+      const presigned = await supabaseStorage.createPresignedDownloadUrl({
+        bucket: targetBucket,
+        path: storagePath,
+        expiresInSeconds: 86400,
+      });
+      assetUrl = presigned?.downloadUrl || supabaseStorage.getPublicUrl(storagePath, targetBucket);
+    } catch (_) {
+      assetUrl = supabaseStorage.getPublicUrl(storagePath, targetBucket);
+    }
 
     // 4. Audit log
     try {

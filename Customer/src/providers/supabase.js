@@ -267,6 +267,24 @@ async function verifyIdToken(token, checkRevoked = true) {
 /**
  * Returns the active storage client or admin client.
  */
+/**
+ * Determines the target storage bucket based on explicit bucket or key prefix/pattern.
+ * Customer data routes to gongo-customers; Partner KYC routes to gongo-partner-documents;
+ * public assets route to gongo-uploads.
+ */
+function resolveBucketForKey(key, explicitBucket) {
+  if (explicitBucket) return explicitBucket;
+  if (!key) return env.SUPABASE_STORAGE_BUCKET || 'gongo-uploads';
+  if (key.startsWith('partners/')) return 'gongo-partner-documents';
+  if (
+    key.startsWith('customers/') ||
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/(profile|aadhar-card|DL|others|documents|photo|aadhaar)/i.test(key)
+  ) {
+    return env.CUSTOMER_STORAGE_BUCKET || 'gongo-customers';
+  }
+  return env.SUPABASE_STORAGE_BUCKET || 'gongo-uploads';
+}
+
 function getStorageClient() {
   if (mockStorageClient) {
     return mockStorageClient;
@@ -283,7 +301,7 @@ function getStorageClient() {
  * @param {number} [params.expiresInSeconds] - Expiry in seconds
  * @returns {Promise<{ uploadUrl: string, key: string, expiresInSeconds: number, headers: object }>}
  */
-async function createPresignedPutUrl({ key, contentType, expiresInSeconds }) {
+async function createPresignedPutUrl({ key, contentType, expiresInSeconds, bucket }) {
   const expiry = expiresInSeconds || env.SUPABASE_STORAGE_PRESIGN_UPLOAD_EXPIRES_SECONDS || 900;
 
   if (mockPresignerFn) {
@@ -299,16 +317,16 @@ async function createPresignedPutUrl({ key, contentType, expiresInSeconds }) {
   }
 
   const client = getStorageClient();
-  const bucket = env.SUPABASE_STORAGE_BUCKET || 'gongo-uploads';
+  const bucketName = resolveBucketForKey(key, bucket);
 
   try {
-    const { data, error } = await client.storage.from(bucket).createSignedUploadUrl(key, { upsert: true });
+    const { data, error } = await client.storage.from(bucketName).createSignedUploadUrl(key, { upsert: true });
     if (error || !data) {
       // In automated testing environments where Supabase credentials are mocks,
       // provide a valid deterministic signed URL.
       if (env.NODE_ENV === 'test' && !env.SUPABASE_ANON_KEY && !env.SUPABASE_SERVICE_ROLE_KEY) {
         return {
-          uploadUrl: `https://${bucket}.mock-supabase-storage.local/${key}?token=mock_upload_token`,
+          uploadUrl: `https://${bucketName}.mock-supabase-storage.local/${key}?token=mock_upload_token`,
           key,
           expiresInSeconds: expiry,
           headers: {
@@ -335,7 +353,7 @@ async function createPresignedPutUrl({ key, contentType, expiresInSeconds }) {
   } catch (err) {
     if (env.NODE_ENV === 'test' && !env.SUPABASE_ANON_KEY && !env.SUPABASE_SERVICE_ROLE_KEY) {
       return {
-        uploadUrl: `https://${bucket}.mock-supabase-storage.local/${key}?token=mock_upload_token`,
+        uploadUrl: `https://${bucketName}.mock-supabase-storage.local/${key}?token=mock_upload_token`,
         key,
         expiresInSeconds: expiry,
         headers: {
@@ -367,7 +385,7 @@ async function createPresignedGetUrl({ key, expiresInSeconds, bucket }) {
   }
 
   const client = getStorageClient();
-  const bucketName = bucket || (key && key.startsWith('partners/') ? 'gongo-partner-documents' : (env.SUPABASE_STORAGE_BUCKET || 'gongo-uploads'));
+  const bucketName = resolveBucketForKey(key, bucket);
 
   try {
     const { data, error } = await client.storage.from(bucketName).createSignedUrl(key, expiry);
@@ -415,7 +433,7 @@ async function createPresignedGetUrl({ key, expiresInSeconds, bucket }) {
  * @param {string} params.key - Storage object path/key
  * @returns {Promise<{ contentLength: number, contentType: string, eTag?: string, lastModified?: Date }>}
  */
-async function headObject({ key }) {
+async function headObject({ key, bucket }) {
   if (mockStorageClient && typeof mockStorageClient.send === 'function') {
     try {
       const response = await mockStorageClient.send({ key });
@@ -437,10 +455,10 @@ async function headObject({ key }) {
   }
 
   const client = getStorageClient();
-  const bucket = env.SUPABASE_STORAGE_BUCKET || 'gongo-uploads';
+  const bucketName = resolveBucketForKey(key, bucket);
 
   try {
-    const { data, error } = await client.storage.from(bucket).info(key);
+    const { data, error } = await client.storage.from(bucketName).info(key);
     if (error || !data) {
       const isNotFound = error?.statusCode === 404
         || error?.status === 404
@@ -481,17 +499,17 @@ async function headObject({ key }) {
  * @param {string} params.key - Storage object path/key
  * @returns {Promise<{ success: boolean }>}
  */
-async function deleteObject({ key }) {
+async function deleteObject({ key, bucket }) {
   if (mockStorageClient && typeof mockStorageClient.send === 'function') {
     await mockStorageClient.send({ key });
     return { success: true };
   }
 
   const client = getStorageClient();
-  const bucket = env.SUPABASE_STORAGE_BUCKET || 'gongo-uploads';
+  const bucketName = resolveBucketForKey(key, bucket);
 
   try {
-    const { error } = await client.storage.from(bucket).remove([key]);
+    const { error } = await client.storage.from(bucketName).remove([key]);
     if (error) {
       logger.error('Error executing Supabase Storage deleteObject', { key, error: error.message });
       throw error;
@@ -511,7 +529,7 @@ async function deleteObject({ key }) {
  * @param {number} [params.maxBytes=16] - Maximum bytes to fetch (default 16)
  * @returns {Promise<Buffer>}
  */
-async function getObjectHeaderBytes({ key, maxBytes = 16 }) {
+async function getObjectHeaderBytes({ key, maxBytes = 16, bucket }) {
   if (mockStorageClient && typeof mockStorageClient.send === 'function') {
     try {
       const response = await mockStorageClient.send({ key, maxBytes });
@@ -536,10 +554,10 @@ async function getObjectHeaderBytes({ key, maxBytes = 16 }) {
   }
 
   const client = getStorageClient();
-  const bucket = env.SUPABASE_STORAGE_BUCKET || 'gongo-uploads';
+  const bucketName = resolveBucketForKey(key, bucket);
 
   try {
-    const { data, error } = await client.storage.from(bucket).download(key);
+    const { data, error } = await client.storage.from(bucketName).download(key);
     if (error || !data) {
       const isNotFound = error?.statusCode === 404
         || error?.status === 404

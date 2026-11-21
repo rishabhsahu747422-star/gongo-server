@@ -108,16 +108,16 @@ function isAwsConfigured() {
  * @param {number} [params.expiresInSeconds] - Expiry in seconds
  * @returns {Promise<{ uploadUrl: string, key: string, expiresInSeconds: number, headers: object }>}
  */
-async function createPresignedPutUrl({ key, contentType, expiresInSeconds }) {
+async function createPresignedPutUrl({ key, contentType, expiresInSeconds, bucket }) {
   if (!isAwsConfigured()) {
-    return supabaseProvider.createPresignedPutUrl({ key, contentType, expiresInSeconds });
+    return supabaseProvider.createPresignedPutUrl({ key, contentType, expiresInSeconds, bucket });
   }
   const client = getS3Client();
-  const bucket = env.AWS_S3_BUCKET;
+  const targetBucket = bucket || env.AWS_S3_BUCKET;
   const expiry = expiresInSeconds || env.AWS_S3_PRESIGN_UPLOAD_EXPIRES_SECONDS || 900;
 
   const command = new PutObjectCommand({
-    Bucket: bucket,
+    Bucket: targetBucket,
     Key: key,
     ContentType: contentType,
     ServerSideEncryption: 'AES256',
@@ -144,16 +144,16 @@ async function createPresignedPutUrl({ key, contentType, expiresInSeconds }) {
  * @param {number} [params.expiresInSeconds] - Expiry in seconds
  * @returns {Promise<{ downloadUrl: string, expiresInSeconds: number }>}
  */
-async function createPresignedGetUrl({ key, expiresInSeconds }) {
+async function createPresignedGetUrl({ key, expiresInSeconds, bucket }) {
   if (!isAwsConfigured()) {
-    return supabaseProvider.createPresignedGetUrl({ key, expiresInSeconds });
+    return supabaseProvider.createPresignedGetUrl({ key, expiresInSeconds, bucket });
   }
   const client = getS3Client();
-  const bucket = env.AWS_S3_BUCKET;
+  const targetBucket = bucket || env.AWS_S3_BUCKET;
   const expiry = expiresInSeconds || env.AWS_S3_PRESIGN_DOWNLOAD_EXPIRES_SECONDS || 3600;
 
   const command = new GetObjectCommand({
-    Bucket: bucket,
+    Bucket: targetBucket,
     Key: key,
   });
 
@@ -172,16 +172,16 @@ async function createPresignedGetUrl({ key, expiresInSeconds }) {
  * @param {string} params.key - S3 object key
  * @returns {Promise<{ contentLength: number, contentType: string, eTag: string }>}
  */
-async function headObject({ key }) {
+async function headObject({ key, bucket }) {
   if (!isAwsConfigured()) {
-    return supabaseProvider.headObject({ key });
+    return supabaseProvider.headObject({ key, bucket });
   }
   const client = getS3Client();
-  const bucket = env.AWS_S3_BUCKET;
+  const targetBucket = bucket || env.AWS_S3_BUCKET;
 
   try {
     const command = new HeadObjectCommand({
-      Bucket: bucket,
+      Bucket: targetBucket,
       Key: key,
     });
     const response = await client.send(command);
@@ -216,16 +216,16 @@ async function headObject({ key }) {
  * @param {string} params.key - S3 object key
  * @returns {Promise<{ success: boolean }>}
  */
-async function deleteObject({ key }) {
+async function deleteObject({ key, bucket }) {
   if (!isAwsConfigured()) {
-    return supabaseProvider.deleteObject({ key });
+    return supabaseProvider.deleteObject({ key, bucket });
   }
   const client = getS3Client();
-  const bucket = env.AWS_S3_BUCKET;
+  const targetBucket = bucket || env.AWS_S3_BUCKET;
 
   try {
     const command = new DeleteObjectCommand({
-      Bucket: bucket,
+      Bucket: targetBucket,
       Key: key,
     });
     await client.send(command);
@@ -244,16 +244,16 @@ async function deleteObject({ key }) {
  * @param {number} [params.maxBytes=16] - Maximum bytes to fetch (default 16)
  * @returns {Promise<Buffer>}
  */
-async function getObjectHeaderBytes({ key, maxBytes = 16 }) {
+async function getObjectHeaderBytes({ key, maxBytes = 16, bucket }) {
   if (!isAwsConfigured()) {
-    return supabaseProvider.getObjectHeaderBytes({ key, maxBytes });
+    return supabaseProvider.getObjectHeaderBytes({ key, maxBytes, bucket });
   }
   const client = getS3Client();
-  const bucket = env.AWS_S3_BUCKET;
+  const targetBucket = bucket || env.AWS_S3_BUCKET;
 
   try {
     const command = new GetObjectCommand({
-      Bucket: bucket,
+      Bucket: targetBucket,
       Key: key,
       Range: `bytes=0-${maxBytes - 1}`,
     });

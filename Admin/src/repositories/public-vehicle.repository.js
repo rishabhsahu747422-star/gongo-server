@@ -225,10 +225,19 @@ class PublicVehicleRepository extends BaseRepository {
     const vehicles = await Promise.all(
       listRes.rows.map(async (row) => {
         let imageUrl = row.primary_image_url || row.fallback_image_url || null;
-        if (imageUrl && !imageUrl.startsWith('http')) {
+        const isPublicUrl = typeof imageUrl === 'string' && imageUrl.includes('/storage/v1/object/public/');
+        if (imageUrl && (!imageUrl.startsWith('http') || isPublicUrl)) {
           try {
-            const bucket = imageUrl.startsWith('partners/') ? 'gongo-partner-documents' : 'gongo-uploads';
-            const res = await createPresignedDownloadUrl({ bucket, path: imageUrl, expiresInSeconds: 86400 });
+            let key = imageUrl;
+            let bucket = 'gongo-uploads';
+            const match = imageUrl.match(/\/storage\/v1\/object\/public\/(gongo-uploads|gongo-partner-documents)\/(.+)$/);
+            if (match) {
+              bucket = match[1];
+              key = match[2];
+            } else if (imageUrl.startsWith('partners/')) {
+              bucket = 'gongo-partner-documents';
+            }
+            const res = await createPresignedDownloadUrl({ bucket, path: key.replace(/^\/+/, ''), expiresInSeconds: 86400 });
             if (res?.downloadUrl) {
               imageUrl = res.downloadUrl;
             }

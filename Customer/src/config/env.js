@@ -155,6 +155,10 @@ const env = cleanEnv(process.env, {
     default: 'gongo-uploads',
     docs: 'Supabase Storage bucket name',
   }),
+  CUSTOMER_STORAGE_BUCKET: str({
+    default: 'gongo-customers',
+    docs: 'Private Supabase Storage bucket for customer personal data and documents',
+  }),
   SUPABASE_STORAGE_PRESIGN_UPLOAD_EXPIRES_SECONDS: num({
     default: 900,
     docs: 'Presigned upload URL expiration in seconds (default: 15m)',
@@ -348,7 +352,7 @@ const env = cleanEnv(process.env, {
     docs: 'Controls whether verified Aadhaar XML files are stored in Supabase Storage. Set false if retention is legally prohibited or disabled.',
   }),
   AADHAAR_STORAGE_BUCKET: str({
-    default: 'customer-identity-documents',
+    default: 'gongo-customers',
     docs: 'Private Supabase Storage bucket for storing verified Aadhaar XML files.',
   }),
 

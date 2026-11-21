@@ -33,7 +33,7 @@ const AUDIT_EVENT_TYPES = Object.freeze({
 });
 
 const AADHAAR_CONSTANTS = Object.freeze({
-  DEFAULT_STORAGE_BUCKET: 'customer-identity-documents',
+  DEFAULT_STORAGE_BUCKET: 'gongo-customers',
   MAX_XML_SIZE_BYTES: 5 * 1024 * 1024, // 5 MB
   MIN_XML_SIZE_BYTES: 100, // 100 bytes minimum valid XML structure
   STATE_TTL_SECONDS: 900, // 15 minutes session TTL

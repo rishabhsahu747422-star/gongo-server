@@ -346,6 +346,7 @@ class AuthService {
       if (customer && customer.avatarStorageKey) {
         const presigned = await this.s3Provider.createPresignedGetUrl({
           key: customer.avatarStorageKey,
+          bucket: env.CUSTOMER_STORAGE_BUCKET || 'gongo-customers',
         });
         avatarUrl = presigned.downloadUrl;
         if (avatarUrl && customer.updatedAt) {

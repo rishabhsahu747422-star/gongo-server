@@ -2,7 +2,7 @@
 
 const { CustomerRepository, CustomerDocumentRepository } = require('../repositories');
 const { NotFoundError, ForbiddenError, ConflictError } = require('../errors');
-const { logger } = require('../config');
+const { env, logger } = require('../config');
 const s3Provider = require('./storage/s3.provider');
 const storageService = require('./storage.service');
 
@@ -81,6 +81,7 @@ class CustomerService {
       try {
         const presigned = await this.s3Provider.createPresignedGetUrl({
           key: user.avatarStorageKey,
+          bucket: env.CUSTOMER_STORAGE_BUCKET || 'gongo-customers',
         });
         avatarUrl = presigned.downloadUrl;
         if (avatarUrl && user.updatedAt) {
@@ -148,6 +149,7 @@ class CustomerService {
       try {
         const presigned = await this.s3Provider.createPresignedGetUrl({
           key: updatedUser.avatarStorageKey,
+          bucket: env.CUSTOMER_STORAGE_BUCKET || 'gongo-customers',
         });
         avatarUrl = presigned.downloadUrl;
         if (avatarUrl && updatedUser.updatedAt) {

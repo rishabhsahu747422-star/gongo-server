@@ -188,8 +188,22 @@ class AdminCustomerRepository extends BaseRepository {
     const res = await executor(sql, values);
     const total = res.rows.length > 0 ? res.rows[0].full_count : 0;
 
-    const customers = res.rows.map((r) => {
-      const photo = r.profile_photo_url || r.profile_photo_path || null;
+    const supabaseStorage = require('../providers/supabase-storage');
+    const customers = await Promise.all(res.rows.map(async (r) => {
+      let photo = r.profile_photo_url || null;
+      const photoPath = r.profile_photo_path || (typeof photo === 'string' && photo.startsWith('customers/') ? photo : null);
+      if (photoPath) {
+        try {
+          const presigned = await supabaseStorage.createPresignedDownloadUrl({
+            bucket: 'gongo-customers',
+            path: photoPath,
+            expiresInSeconds: 3600,
+          });
+          if (presigned?.downloadUrl) {
+            photo = presigned.downloadUrl;
+          }
+        } catch (_) {}
+      }
       return {
         id: r.id,
         customerReference: r.customer_reference || null,
@@ -207,7 +221,7 @@ class AdminCustomerRepository extends BaseRepository {
         createdAt: r.created_at,
         updatedAt: r.updated_at,
       };
-    });
+    }));
 
     return { customers, total };
   }
@@ -251,7 +265,21 @@ class AdminCustomerRepository extends BaseRepository {
     if (!res.rows[0]) return null;
 
     const r = res.rows[0];
-    const photo = r.profile_photo_url || r.profile_photo_path || null;
+    const supabaseStorage = require('../providers/supabase-storage');
+    let photo = r.profile_photo_url || null;
+    const photoPath = r.profile_photo_path || (typeof photo === 'string' && photo.startsWith('customers/') ? photo : null);
+    if (photoPath) {
+      try {
+        const presigned = await supabaseStorage.createPresignedDownloadUrl({
+          bucket: 'gongo-customers',
+          path: photoPath,
+          expiresInSeconds: 3600,
+        });
+        if (presigned?.downloadUrl) {
+          photo = presigned.downloadUrl;
+        }
+      } catch (_) {}
+    }
     return {
       id: r.id,
       customerReference: r.customer_reference || null,
@@ -693,9 +721,11 @@ class AdminCustomerRepository extends BaseRepository {
         const storageKey = r.storage_path || r.file_url || null;
         let viewUrl = r.file_url || null;
 
-        if (storageKey && (!viewUrl || (!viewUrl.startsWith('http://') && !viewUrl.startsWith('https://')))) {
+        const isPublicUrl = typeof viewUrl === 'string' && viewUrl.includes('/storage/v1/object/public/');
+        if (storageKey && (!viewUrl || (!viewUrl.startsWith('http://') && !viewUrl.startsWith('https://')) || isPublicUrl)) {
           try {
             const presigned = await supabaseStorage.createPresignedDownloadUrl({
+              bucket: 'gongo-customers',
               path: storageKey,
               expiresInSeconds: 3600,
             });
@@ -703,7 +733,8 @@ class AdminCustomerRepository extends BaseRepository {
               viewUrl = presigned.downloadUrl;
             }
           } catch (_) {
-            viewUrl = supabaseStorage.getPublicUrl(storageKey);
+            // Customer personal documents in gongo-customers are strictly private - never fall back to public
+            viewUrl = null;
           }
         }
 

@@ -14,7 +14,39 @@ const { ERROR_CODES } = require('../constants/errors');
 
 class AdminOfferService {
   async listOffers(query = {}) {
-    return adminOfferRepository.listOffers(query);
+    const result = await adminOfferRepository.listOffers(query);
+    if (result && Array.isArray(result.items)) {
+      result.items = await Promise.all(
+        result.items.map(async (offer) => {
+          const raw = offer.storage_path || offer.image_url;
+          const targetBucket = env.SUPABASE_STORAGE_BUCKET || 'gongo-uploads';
+          const isSupabasePublicUrl = typeof raw === 'string' && raw.includes(`/storage/v1/object/public/${targetBucket}/`);
+          let key = null;
+          if (isSupabasePublicUrl) {
+            key = raw.split(`/storage/v1/object/public/${targetBucket}/`)[1];
+          } else if (offer.storage_path) {
+            key = offer.storage_path;
+          } else if (typeof raw === 'string' && !raw.startsWith('http://') && !raw.startsWith('https://')) {
+            key = raw;
+          }
+
+          if (key) {
+            try {
+              const presigned = await supabaseStorage.createPresignedDownloadUrl({
+                bucket: targetBucket,
+                path: key.replace(/^\/+/, ''),
+                expiresInSeconds: 86400,
+              });
+              if (presigned?.downloadUrl) {
+                return { ...offer, image_url: presigned.downloadUrl, imageUrl: presigned.downloadUrl };
+              }
+            } catch (_) {}
+          }
+          return offer;
+        })
+      );
+    }
+    return result;
   }
 
   async getOfferDetail(id) {
@@ -27,8 +59,33 @@ class AdminOfferService {
       adminOfferRepository.findOfferShops(id),
     ]);
 
+    let resolvedOffer = offer;
+    const raw = offer.storage_path || offer.image_url;
+    const targetBucket = env.SUPABASE_STORAGE_BUCKET || 'gongo-uploads';
+    const isSupabasePublicUrl = typeof raw === 'string' && raw.includes(`/storage/v1/object/public/${targetBucket}/`);
+    let key = null;
+    if (isSupabasePublicUrl) {
+      key = raw.split(`/storage/v1/object/public/${targetBucket}/`)[1];
+    } else if (offer.storage_path) {
+      key = offer.storage_path;
+    } else if (typeof raw === 'string' && !raw.startsWith('http://') && !raw.startsWith('https://')) {
+      key = raw;
+    }
+    if (key) {
+      try {
+        const presigned = await supabaseStorage.createPresignedDownloadUrl({
+          bucket: targetBucket,
+          path: key.replace(/^\/+/, ''),
+          expiresInSeconds: 86400,
+        });
+        if (presigned?.downloadUrl) {
+          resolvedOffer = { ...offer, image_url: presigned.downloadUrl, imageUrl: presigned.downloadUrl };
+        }
+      } catch (_) {}
+    }
+
     return {
-      offer,
+      offer: resolvedOffer,
       vehicles,
       shops,
     };
@@ -65,7 +122,17 @@ class AdminOfferService {
       logger.warn('Storage upload exception in offer service', { error: err.message });
     }
 
-    const assetUrl = supabaseStorage.getPublicUrl(storagePath, targetBucket);
+    let assetUrl;
+    try {
+      const presigned = await supabaseStorage.createPresignedDownloadUrl({
+        bucket: targetBucket,
+        path: storagePath,
+        expiresInSeconds: 86400,
+      });
+      assetUrl = presigned?.downloadUrl || supabaseStorage.getPublicUrl(storagePath, targetBucket);
+    } catch (_) {
+      assetUrl = supabaseStorage.getPublicUrl(storagePath, targetBucket);
+    }
 
     try {
       auditService.logAdminAction({

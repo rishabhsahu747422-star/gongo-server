@@ -69,7 +69,7 @@ function buildLiveLikeDb() {
     );
     CREATE TABLE vehicle_pricing (
       vehicle_id UUID, is_active BOOLEAN, price NUMERIC, price_per_hour NUMERIC,
-      price_per_day NUMERIC, security_deposit NUMERIC, extra_km_charge NUMERIC
+      price_3_hours NUMERIC, price_6_hours NUMERIC, price_12_hours NUMERIC, price_per_day NUMERIC, security_deposit NUMERIC, extra_km_charge NUMERIC
     );
     CREATE TABLE bookings (
       id UUID PRIMARY KEY, vehicle_id UUID, customer_id UUID, status TEXT, booking_status TEXT,
@@ -96,7 +96,7 @@ function buildLiveLikeDb() {
         status, verification_status, manual_status, is_archived, is_active, latitude, longitude)
       VALUES ('${id}', '${PARTNER_ID}', '${SHOP_ID}', 'bike', 'Honda', 'Activa', 'PETROL', 'MANUAL',
         '${status}', '${verification}', '${manual}', ${archived}, ${active}, 23.2599, 77.4126);
-      INSERT INTO vehicle_pricing VALUES ('${id}', true, 500, 50, 500, 1000, 10);
+      INSERT INTO vehicle_pricing VALUES ('${id}', true, 500, 50, 150, 300, 450, 500, 1000, 10);
     `);
   });
   return db;

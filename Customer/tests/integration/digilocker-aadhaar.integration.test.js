@@ -444,6 +444,34 @@ describe('DigiLocker Aadhaar Verification Integration Tests', () => {
 
       db.public.none(`DELETE FROM customer_identity_verifications WHERE customer_id = '${customerB.id}';`);
     });
+
+    it('rejects callback with 503 STORAGE_UPLOAD_ERROR when Supabase storage bucket is not found or fails', async () => {
+      // Mock storage upload failure
+      mockStorageBucket.upload.mockResolvedValueOnce({
+        data: null,
+        error: { message: 'Bucket not found', statusCode: 404 },
+      });
+
+      const initRes = await request(app)
+        .post('/api/v1/customers/me/aadhaar/initiate')
+        .set('Authorization', 'Bearer token-customer-b');
+      const failVerifId = initRes.body.data.verificationId;
+      const failState = initRes.body.data.state;
+
+      const res = await request(app)
+        .get('/api/v1/customers/aadhaar/callback')
+        .set('Accept', 'application/json')
+        .query({ state: failState });
+
+      expect(res.status).toBe(503);
+      expect(res.body.code).toBe('STORAGE_UPLOAD_ERROR');
+
+      // Verify DB record marked FAILED
+      const rows = db.public.many(`SELECT verification_status FROM customer_identity_verifications WHERE id = '${failVerifId}';`);
+      expect(rows[0].verification_status).toBe('FAILED');
+
+      db.public.none(`DELETE FROM customer_identity_verifications WHERE customer_id = '${customerB.id}';`);
+    });
   });
 
   describe('GET /api/v1/customers/me/aadhaar/status', () => {
