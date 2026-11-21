@@ -65,6 +65,7 @@ class AadhaarController {
       const acceptsHtml = req.headers.accept && req.headers.accept.includes('text/html');
       if (acceptsHtml && req.method === 'GET') {
         const deepLink = `gongo://aadhaar-verification/result?status=${encodeURIComponent(result.status)}&verificationId=${encodeURIComponent(result.verificationId || '')}`;
+        const intentUri = `intent://aadhaar-verification/result?status=${encodeURIComponent(result.status)}&verificationId=${encodeURIComponent(result.verificationId || '')}#Intent;scheme=gongo;package=com.gongo.gongocustomer;end`;
         const isSuccess = result.status === 'VERIFIED';
         const title = isSuccess ? 'Verification Complete' : (result.status === 'CANCELLED' ? 'Verification Cancelled' : 'Verification Failed');
         const color = isSuccess ? '#00D09C' : (result.status === 'CANCELLED' ? '#F59E0B' : '#EF4444');
@@ -121,11 +122,34 @@ class AadhaarController {
       padding: 14px;
       border-radius: 12px;
       transition: opacity 0.2s;
+      cursor: pointer;
     }
     .btn:active { opacity: 0.8; }
+    .subtext { font-size: 13px; color: #9CA3AF; margin: 16px 0 0; line-height: 18px; }
   </style>
   <script>
-    window.location.href = "${deepLink}";
+    function openGongoApp(e) {
+      if (e && e.preventDefault) e.preventDefault();
+      var isAndroid = /android/i.test(navigator.userAgent);
+      var deepLink = "${deepLink}";
+      var intentUri = "${intentUri}";
+
+      if (isAndroid) {
+        window.location.href = intentUri;
+        setTimeout(function() {
+          window.location.href = deepLink;
+        }, 1200);
+      } else {
+        window.location.href = deepLink;
+      }
+      return false;
+    }
+
+    window.addEventListener('DOMContentLoaded', function() {
+      setTimeout(function() {
+        openGongoApp();
+      }, 400);
+    });
   </script>
 </head>
 <body>
@@ -133,7 +157,8 @@ class AadhaarController {
     <div class="badge">${isSuccess ? '✓' : (result.status === 'CANCELLED' ? '!' : '✕')}</div>
     <h1>${title}</h1>
     <p>${result.message || 'You can now return to the GONGO app.'}</p>
-    <a href="${deepLink}" class="btn">Return to GONGO App</a>
+    <a href="${deepLink}" class="btn" onclick="openGongoApp(event)">Return to GONGO App</a>
+    <p class="subtext">If the app doesn't open automatically, tap the button above or simply switch back to the GONGO app.</p>
   </div>
 </body>
 </html>`;
@@ -151,6 +176,7 @@ class AadhaarController {
       const acceptsHtml = req.headers.accept && req.headers.accept.includes('text/html');
       if (acceptsHtml && req.method === 'GET') {
         const deepLink = `gongo://aadhaar-verification/result?status=FAILED&error=${encodeURIComponent(err.code || 'AADHAAR_ERROR')}`;
+        const intentUri = `intent://aadhaar-verification/result?status=FAILED&error=${encodeURIComponent(err.code || 'AADHAAR_ERROR')}#Intent;scheme=gongo;package=com.gongo.gongocustomer;end`;
         const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -163,15 +189,41 @@ class AadhaarController {
     .badge { display: inline-block; width: 64px; height: 64px; border-radius: 32px; background: rgba(239, 68, 68, 0.2); color: #EF4444; font-size: 32px; line-height: 64px; margin-bottom: 16px; }
     h1 { font-size: 20px; margin: 0 0 8px; color: #FFFFFF; }
     p { font-size: 14px; color: #9CA3AF; margin: 0 0 24px; }
-    .btn { display: block; background: #00D09C; color: #000000; text-decoration: none; font-weight: 700; font-size: 15px; padding: 14px; border-radius: 12px; }
+    .btn { display: block; background: #00D09C; color: #000000; text-decoration: none; font-weight: 700; font-size: 15px; padding: 14px; border-radius: 12px; cursor: pointer; }
+    .subtext { font-size: 13px; color: #9CA3AF; margin: 16px 0 0; line-height: 18px; }
   </style>
+  <script>
+    function openGongoApp(e) {
+      if (e && e.preventDefault) e.preventDefault();
+      var isAndroid = /android/i.test(navigator.userAgent);
+      var deepLink = "${deepLink}";
+      var intentUri = "${intentUri}";
+
+      if (isAndroid) {
+        window.location.href = intentUri;
+        setTimeout(function() {
+          window.location.href = deepLink;
+        }, 1200);
+      } else {
+        window.location.href = deepLink;
+      }
+      return false;
+    }
+
+    window.addEventListener('DOMContentLoaded', function() {
+      setTimeout(function() {
+        openGongoApp();
+      }, 400);
+    });
+  </script>
 </head>
 <body>
   <div class="card">
     <div class="badge">✕</div>
     <h1>Verification Failed</h1>
     <p>${err.message || 'DigiLocker authorization could not be completed.'}</p>
-    <a href="${deepLink}" class="btn">Return to GONGO App</a>
+    <a href="${deepLink}" class="btn" onclick="openGongoApp(event)">Return to GONGO App</a>
+    <p class="subtext">If the app doesn't open automatically, tap the button above or simply switch back to the GONGO app.</p>
   </div>
 </body>
 </html>`;

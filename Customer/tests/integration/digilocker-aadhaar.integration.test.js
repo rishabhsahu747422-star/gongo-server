@@ -9,6 +9,7 @@ const { createApp } = require('../../src/app');
 const usersMigration = require('../../database/migrations/1726300000000_create-users-table');
 const docMigration = require('../../database/migrations/1726400000000_create-customer-documents-table');
 const verifMigration = require('../../database/migrations/1729100000000_create-customer-identity-verifications-table');
+const linksMigration = require('../../database/migrations/1729200000000_create-customer-identity-links-table');
 const { defaultProvider: digiLockerProvider } = require('../../src/providers/digilocker.provider');
 const { setMockSupabaseClient, resetSupabaseClient } = require('../../src/providers/supabase');
 
@@ -24,7 +25,7 @@ describe('DigiLocker Aadhaar Verification Integration Tests', () => {
   const customerA = {
     id: '10000000-0000-4000-8000-000000000001',
     role: 'customer',
-    name: 'Aadhaar Customer A',
+    name: 'Initial Customer A',
     countryCode: '+91',
     phone: '9876543210',
     email: 'aadhaar_a@example.com',
@@ -80,6 +81,7 @@ describe('DigiLocker Aadhaar Verification Integration Tests', () => {
     await usersMigration.up(pgm);
     await docMigration.up(pgm);
     await verifMigration.up(pgm);
+    await linksMigration.up(pgm);
 
     const adapter = db.adapters.createPg();
     mockPool = new adapter.Pool();
@@ -106,13 +108,25 @@ describe('DigiLocker Aadhaar Verification Integration Tests', () => {
     };
     setMockFirebaseAuth(mockFirebaseAuth);
 
-    // 3. Seed users
+    // 3. Seed users and customer_profiles
     db.public.none(`
+      CREATE TABLE IF NOT EXISTS customer_profiles (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID UNIQUE NOT NULL REFERENCES users(id),
+        full_name VARCHAR(255),
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      );
+
       INSERT INTO users (id, role, name, country_code, phone, email, auth_provider, auth_id, is_active)
       VALUES
         ('${customerA.id}', '${customerA.role}', '${customerA.name}', '${customerA.countryCode}', '${customerA.phone}', '${customerA.email}', 'supabase', '${customerA.authId}', true),
         ('${customerB.id}', '${customerB.role}', '${customerB.name}', '${customerB.countryCode}', '${customerB.phone}', '${customerB.email}', 'supabase', '${customerB.authId}', true),
         ('${partnerUser.id}', '${partnerUser.role}', '${partnerUser.name}', '${partnerUser.countryCode}', '${partnerUser.phone}', '${partnerUser.email}', 'supabase', '${partnerUser.authId}', true);
+
+      INSERT INTO customer_profiles (user_id, full_name)
+      VALUES
+        ('${customerA.id}', '${customerA.name}'),
+        ('${customerB.id}', '${customerB.name}');
     `);
 
     // 4. Configure DigiLocker mock delegate
@@ -234,6 +248,12 @@ describe('DigiLocker Aadhaar Verification Integration Tests', () => {
       const rows = db.public.many(`SELECT * FROM customer_identity_verifications WHERE id = '${activeVerificationId}';`);
       expect(rows[0].verification_status).toBe('VERIFIED');
       expect(rows[0].verified_at).not.toBeNull();
+
+      // Verify profile name synchronized to users and customer_profiles tables
+      const userRows = db.public.many(`SELECT name FROM users WHERE id = '${customerA.id}';`);
+      expect(userRows[0].name).toBe('Aadhaar Customer A');
+      const profileRows = db.public.many(`SELECT full_name FROM customer_profiles WHERE user_id = '${customerA.id}';`);
+      expect(profileRows[0].full_name).toBe('Aadhaar Customer A');
     });
 
     it('is idempotent on duplicate callback requests', async () => {
@@ -281,6 +301,9 @@ describe('DigiLocker Aadhaar Verification Integration Tests', () => {
 
       expect(res.status).toBe(200);
       expect(res.text).toContain('gongo://aadhaar-verification/result');
+      expect(res.text).toContain('intent://aadhaar-verification/result');
+      expect(res.text).toContain('package=com.gongo.gongocustomer');
+      expect(res.text).toContain('openGongoApp');
       expect(res.text).toContain('Return to GONGO App');
     });
 
@@ -312,6 +335,8 @@ describe('DigiLocker Aadhaar Verification Integration Tests', () => {
       expect(res.status).toBe(400);
       expect(res.text).toContain('Verification Failed');
       expect(res.text).toContain('Return to GONGO App');
+      expect(res.text).toContain('intent://aadhaar-verification/result');
+      expect(res.text).toContain('openGongoApp');
     });
 
     it('completes verification via Sandbox redirect with session_id query param and no state', async () => {
@@ -452,25 +477,121 @@ describe('DigiLocker Aadhaar Verification Integration Tests', () => {
         error: { message: 'Bucket not found', statusCode: 404 },
       });
 
+      const origFetch = defaultMockDelegate.fetchAadhaarXml;
+      defaultMockDelegate.fetchAadhaarXml = async () => ({
+        xmlContent: `<?xml version="1.0" encoding="UTF-8"?><UidData uid="XXXXXXXX9876"><Poi dob="20-10-1995" gender="F" name="Aadhaar Customer B"/></UidData>`,
+        documentType: 'AADHAAR',
+        maskedAadhaar: 'XXXX-XXXX-9876',
+        isAuthorized: true,
+      });
+
+      try {
+        const initRes = await request(app)
+          .post('/api/v1/customers/me/aadhaar/initiate')
+          .set('Authorization', 'Bearer token-customer-b');
+        const failVerifId = initRes.body.data.verificationId;
+        const failState = initRes.body.data.state;
+
+        const res = await request(app)
+          .get('/api/v1/customers/aadhaar/callback')
+          .set('Accept', 'application/json')
+          .query({ state: failState });
+
+        expect(res.status).toBe(503);
+        expect(res.body.code).toBe('STORAGE_UPLOAD_ERROR');
+
+        // Verify DB record marked FAILED
+        const rows = db.public.many(`SELECT verification_status FROM customer_identity_verifications WHERE id = '${failVerifId}';`);
+        expect(rows[0].verification_status).toBe('FAILED');
+      } finally {
+        defaultMockDelegate.fetchAadhaarXml = origFetch;
+        db.public.none(`DELETE FROM customer_identity_verifications WHERE customer_id = '${customerB.id}';`);
+      }
+    });
+
+    it('rejects duplicate verification with 409 IDENTITY_ALREADY_LINKED when same Aadhaar identity is verified on another customer account', async () => {
+      // Customer B initiates verification
       const initRes = await request(app)
         .post('/api/v1/customers/me/aadhaar/initiate')
         .set('Authorization', 'Bearer token-customer-b');
-      const failVerifId = initRes.body.data.verificationId;
-      const failState = initRes.body.data.state;
+      const bState = initRes.body.data.state;
+      const bVerifId = initRes.body.data.verificationId;
+
+      // Mock delegate returns validXml which belongs to Customer A
+      const res = await request(app)
+        .get('/api/v1/customers/aadhaar/callback')
+        .set('Accept', 'application/json')
+        .query({ state: bState, code: 'code_for_customer_b' });
+
+      expect(res.status).toBe(409);
+      expect(res.body.code).toBe('IDENTITY_ALREADY_LINKED');
+      expect(res.body.message).toContain('already verified on another account');
+
+      // Verify Customer B's profile name remains untouched
+      const userRow = db.public.one(`SELECT name FROM users WHERE id = '${customerB.id}';`);
+      expect(userRow.name).toBe('Aadhaar Customer B');
+
+      // Verify Customer B's verification record marked FAILED
+      const verifRow = db.public.one(`SELECT verification_status FROM customer_identity_verifications WHERE id = '${bVerifId}';`);
+      expect(verifRow.verification_status).toBe('FAILED');
+
+      db.public.none(`DELETE FROM customer_identity_verifications WHERE id = '${bVerifId}';`);
+    });
+
+    it('allows re-verification of the same Aadhaar identity by the same customer', async () => {
+      // Customer A initiates another verification
+      const initRes = await request(app)
+        .post('/api/v1/customers/me/aadhaar/initiate')
+        .set('Authorization', 'Bearer token-customer-a');
+      const aState2 = initRes.body.data.state;
+      const aVerifId2 = initRes.body.data.verificationId;
 
       const res = await request(app)
         .get('/api/v1/customers/aadhaar/callback')
         .set('Accept', 'application/json')
-        .query({ state: failState });
+        .query({ state: aState2, code: 'code_reverify_customer_a' });
 
-      expect(res.status).toBe(503);
-      expect(res.body.code).toBe('STORAGE_UPLOAD_ERROR');
+      expect(res.status).toBe(200);
+      expect(res.body.data.status).toBe('VERIFIED');
 
-      // Verify DB record marked FAILED
-      const rows = db.public.many(`SELECT verification_status FROM customer_identity_verifications WHERE id = '${failVerifId}';`);
-      expect(rows[0].verification_status).toBe('FAILED');
+      // Verify identity link now points to latest verification ID
+      const linkRow = db.public.one(`SELECT verification_id FROM customer_identity_links WHERE customer_id = '${customerA.id}';`);
+      expect(linkRow.verification_id).toBe(aVerifId2);
 
-      db.public.none(`DELETE FROM customer_identity_verifications WHERE customer_id = '${customerB.id}';`);
+      db.public.none(`DELETE FROM customer_identity_verifications WHERE id = '${aVerifId2}';`);
+    });
+
+    it('rejects callback with 400 AADHAAR_MISSING_NAME when XML has empty or missing name attribute in Poi element', async () => {
+      digiLockerProvider.setMockDelegate({
+        initiateSession: async () => ({ authorizationUrl: 'https://sandbox.co.in/auth', state: 's', provider: 'DIGILOCKER_SANDBOX', providerReferenceId: 'sess_noname' }),
+        getSessionStatus: async () => ({ status: 'succeeded', isAuthorized: true, isCompleted: true }),
+        fetchAadhaarXml: async () => ({
+          xmlContent: `<?xml version="1.0" encoding="UTF-8"?><UidData uid="XXXXXXXX9999"><Poi dob="01-01-1990" gender="M" name="   "/></UidData>`,
+          documentType: 'AADHAAR',
+          maskedAadhaar: 'XXXX-XXXX-9999',
+          isAuthorized: true,
+        }),
+      });
+
+      const initRes = await request(app)
+        .post('/api/v1/customers/me/aadhaar/initiate')
+        .set('Authorization', 'Bearer token-customer-b');
+      const noNameState = initRes.body.data.state;
+      const noNameVerifId = initRes.body.data.verificationId;
+
+      const res = await request(app)
+        .get('/api/v1/customers/aadhaar/callback')
+        .set('Accept', 'application/json')
+        .query({ state: noNameState });
+
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe('AADHAAR_MISSING_NAME');
+
+      // Verify Customer B's name is unchanged
+      const userRow = db.public.one(`SELECT name FROM users WHERE id = '${customerB.id}';`);
+      expect(userRow.name).toBe('Aadhaar Customer B');
+
+      db.public.none(`DELETE FROM customer_identity_verifications WHERE id = '${noNameVerifId}';`);
     });
   });
 

@@ -1,6 +1,7 @@
 'use strict';
 
 const crypto = require('crypto');
+const { XMLParser } = require('fast-xml-parser');
 const env = require('../config/env');
 const logger = require('../config/logger');
 const {
@@ -9,12 +10,13 @@ const {
   CustomerIdentityVerificationRepository,
 } = require('../repositories');
 const { defaultProvider: defaultDigiLockerProvider } = require('../providers/digilocker.provider');
-const { getSupabaseAdmin } = require('../providers/supabase');
+const { getSupabaseAdmin, resolveBucketForKey } = require('../providers/supabase');
 const { redisClient } = require('../config/redis');
 const {
   BadRequestError,
   NotFoundError,
   ForbiddenError,
+  ConflictError,
   ServiceUnavailableError,
 } = require('../errors');
 const {
@@ -61,6 +63,125 @@ class AadhaarVerificationService {
    */
   static getStateKey(state) {
     return `aadhaar:session:${state}`;
+  }
+
+  /**
+   * Safely parses Aadhaar XML and extracts verified identity fields (<Poi>, UID/masked UID).
+   * Strictly enforces XXE protection by disabling entity processing.
+   *
+   * @param {string} xmlString
+   * @returns {{ verifiedName: string, dob: string|null, gender: string|null, uid: string, maskedAadhaar: string }}
+   */
+  static extractIdentityInfoFromXml(xmlString) {
+    if (!xmlString || typeof xmlString !== 'string') {
+      throw new BadRequestError('Empty or invalid XML payload received from provider', 'AADHAAR_INVALID_XML');
+    }
+
+    const parser = new XMLParser({
+      ignoreAttributes: false,
+      attributeNamePrefix: '',
+      parseAttributeValue: false,
+      trimValues: true,
+      processEntities: false, // Strict protection against XML External Entity (XXE) injection
+      allowBooleanAttributes: false,
+    });
+
+    let parsed;
+    try {
+      parsed = parser.parse(xmlString);
+    } catch (parseErr) {
+      throw new BadRequestError(`XML parsing failed: ${parseErr.message}`, 'AADHAAR_MALFORMED_XML');
+    }
+
+    if (!parsed || typeof parsed !== 'object') {
+      throw new BadRequestError('Malformed Aadhaar XML payload structure', 'AADHAAR_MALFORMED_XML');
+    }
+
+    // Recursively locate <Poi> and <UidData> nodes regardless of outer wrapper tags
+    let poiNode = null;
+    let uidVal = null;
+
+    function findNodes(obj) {
+      if (!obj || typeof obj !== 'object') return;
+
+      for (const [key, val] of Object.entries(obj)) {
+        const lowerKey = key.toLowerCase();
+        if (lowerKey === 'poi') {
+          poiNode = val;
+        }
+        if (lowerKey === 'uiddata' && val && val.uid) {
+          uidVal = val.uid;
+        }
+        if (lowerKey === 'printletterbarcodedata' && val) {
+          if (val.uid) uidVal = val.uid;
+          if (!poiNode && (val.name || val.dob || val.gender)) {
+            poiNode = val;
+          }
+        }
+        if (typeof val === 'object') {
+          findNodes(val);
+        }
+      }
+    }
+
+    findNodes(parsed);
+
+    if (!poiNode) {
+      throw new BadRequestError('Missing <Poi> element in Aadhaar XML response', 'AADHAAR_MISSING_POI');
+    }
+
+    const rawName = poiNode.name;
+    if (!rawName || typeof rawName !== 'string' || !rawName.trim()) {
+      throw new BadRequestError('Missing or empty name attribute in <Poi> element', 'AADHAAR_MISSING_NAME');
+    }
+
+    const verifiedName = rawName.trim().replace(/\s+/g, ' ');
+    const dob = poiNode.dob ? String(poiNode.dob).trim() : null;
+    const gender = poiNode.gender ? String(poiNode.gender).trim().toUpperCase() : null;
+
+    // Extract or sanitize UID
+    let cleanUid = uidVal ? String(uidVal).trim() : '';
+    let maskedAadhaar = null;
+
+    if (cleanUid) {
+      const digitsOnly = cleanUid.replace(/[^0-9]/g, '');
+      if (digitsOnly.length >= 4) {
+        maskedAadhaar = `XXXX-XXXX-${digitsOnly.slice(-4)}`;
+      }
+    }
+    if (!maskedAadhaar) {
+      const m = xmlString.match(/[xX]{8}(\d{4})/);
+      if (m && m[1]) {
+        maskedAadhaar = `XXXX-XXXX-${m[1]}`;
+      }
+    }
+
+    return {
+      verifiedName,
+      dob,
+      gender,
+      uid: cleanUid || maskedAadhaar || 'UNKNOWN',
+      maskedAadhaar: maskedAadhaar || 'XXXX-XXXX-0000',
+    };
+  }
+
+  /**
+   * Derives a stable, cryptographic keyed HMAC-SHA256 identity fingerprint.
+   * Normalizes identity attributes to ensure deterministic hashing across verifications.
+   * The secret is maintained securely on the server and never exposed to clients or DB.
+   *
+   * @param {object} info
+   * @param {string} [secret]
+   * @returns {string} 64-character hex string
+   */
+  static computeIdentityHash(info, secret = env.AADHAAR_HMAC_SECRET || env.JWT_SECRET || 'gongo-identity-default-key-v1') {
+    const normUid = (info.uid || '').toUpperCase().replace(/[^0-9X]/g, '');
+    const normDob = (info.dob || '').toLowerCase().trim();
+    const normGender = (info.gender || '').toUpperCase().trim();
+    const normName = (info.verifiedName || '').toLowerCase().trim().replace(/\s+/g, ' ');
+
+    const canonical = `${normUid}|${normDob}|${normGender}|${normName}`;
+    return crypto.createHmac('sha256', secret).update(canonical).digest('hex');
   }
 
   /**
@@ -466,14 +587,121 @@ class AadhaarVerificationService {
       throw docErr;
     }
 
-    // 6. Handle XML Storage based on retention permission
+    // 6. Securely parse XML and extract identity info (<Poi>, UID/masked UID)
+    let identityInfo;
+    try {
+      identityInfo = AadhaarVerificationService.extractIdentityInfoFromXml(docData.xmlContent);
+    } catch (xmlErr) {
+      await this.verificationRepository.updateVerification(verificationId, {
+        verificationStatus: AADHAAR_VERIFICATION_STATUS.FAILED,
+        errorDetails: { reason: 'XML identity extraction failed', message: xmlErr.message },
+      });
+      await this.verificationRepository.createAuditEvent({
+        verificationId,
+        customerId,
+        eventType: AUDIT_EVENT_TYPES.VERIFICATION_FAILED,
+        provider: verification.provider,
+        details: { step: 'XML_EXTRACTION', error: xmlErr.message },
+      });
+      throw xmlErr;
+    }
+
+    // 7. Compute deterministic keyed HMAC-SHA256 identity hash
+    const identityHash = AadhaarVerificationService.computeIdentityHash(identityInfo);
+
+    // 8. Enforce single-account identity uniqueness (Anti-Duplicate Verification Check)
+    if (typeof this.verificationRepository.findIdentityLinkByHash === 'function') {
+      const existingLink = await this.verificationRepository.findIdentityLinkByHash(identityHash);
+      if (existingLink && (existingLink.customer_id || existingLink.customerId) !== customerId) {
+        logger.warn('[AADHAAR_SERVICE] Duplicate Aadhaar identity verification rejected: identity already verified on another account', {
+          verificationId,
+          customerId,
+        });
+
+        await this.verificationRepository.updateVerification(verificationId, {
+          verificationStatus: AADHAAR_VERIFICATION_STATUS.FAILED,
+          errorDetails: {
+            reason: 'IDENTITY_ALREADY_LINKED',
+            message: 'This Aadhaar identity is already verified on another account.',
+          },
+        });
+
+        await this.verificationRepository.createAuditEvent({
+          verificationId,
+          customerId,
+          eventType: AUDIT_EVENT_TYPES.VERIFICATION_FAILED,
+          provider: verification.provider,
+          details: {
+            step: 'DUPLICATE_CHECK',
+            reason: 'IDENTITY_ALREADY_LINKED',
+          },
+        });
+
+        throw new ConflictError(
+          'This Aadhaar identity is already verified on another account.',
+          'IDENTITY_ALREADY_LINKED'
+        );
+      }
+    }
+
+    // 9. Atomic reservation of customer identity link in customer_identity_links
+    if (typeof this.verificationRepository.upsertIdentityLink === 'function') {
+      try {
+        await this.verificationRepository.upsertIdentityLink({
+          customerId,
+          identityHash,
+          idType: 'AADHAAR',
+          verificationId,
+        });
+      } catch (dbConflictErr) {
+        if (dbConflictErr.code === '23505' || dbConflictErr.message?.includes('uq_customer_identity_links_hash')) {
+          logger.warn('[AADHAAR_SERVICE] Concurrent identity link conflict detected via database unique constraint', {
+            verificationId,
+            customerId,
+            error: dbConflictErr.message,
+          });
+          await this.verificationRepository.updateVerification(verificationId, {
+            verificationStatus: AADHAAR_VERIFICATION_STATUS.FAILED,
+            errorDetails: { reason: 'IDENTITY_ALREADY_LINKED' },
+          });
+          throw new ConflictError(
+            'This Aadhaar identity is already verified on another account.',
+            'IDENTITY_ALREADY_LINKED'
+          );
+        }
+        throw dbConflictErr;
+      }
+    }
+
+    // 10. Operation A — Synchronize customer profile name from verified <Poi> name
+    try {
+      await this.customerRepository.updateProfile(customerId, {
+        name: identityInfo.verifiedName,
+      });
+      logger.info('[AADHAAR_SERVICE] Customer profile name synchronized from verified Aadhaar XML', {
+        customerId,
+        verificationId,
+      });
+    } catch (nameSyncErr) {
+      logger.warn('[AADHAAR_SERVICE] Customer profile name synchronization encountered warning', {
+        customerId,
+        error: nameSyncErr.message,
+      });
+    }
+
+    // 11. Operation B — Handle XML Storage based on retention permission
     let storageBucket = null;
     let storagePath = null;
     const isRetentionPermitted = env.AADHAAR_XML_RETENTION_ENABLED;
 
     if (isRetentionPermitted && docData.xmlContent) {
-      storageBucket = this.storageBucket || env.AADHAAR_STORAGE_BUCKET || AADHAAR_CONSTANTS.DEFAULT_STORAGE_BUCKET;
       storagePath = `customers/${customerId}/aadhaar/${verificationId}.xml`;
+      storageBucket = this.storageBucket && this.storageBucket !== 'gongo-uploads'
+        ? this.storageBucket
+        : (typeof resolveBucketForKey === 'function' ? resolveBucketForKey(storagePath, this.storageBucket) : (env.AADHAAR_STORAGE_BUCKET || 'gongo-customers'));
+      if (storageBucket === 'gongo-uploads') {
+        storageBucket = 'gongo-customers';
+      }
 
       try {
         const client = typeof this.getSupabase === 'function' ? this.getSupabase() : this.getSupabase;
@@ -545,6 +773,11 @@ class AadhaarVerificationService {
           code: storageErr.code,
         });
 
+        // Roll back identity link reservation if storage fails so session is not locked
+        if (typeof this.verificationRepository.deleteIdentityLinkByVerificationId === 'function') {
+          await this.verificationRepository.deleteIdentityLinkByVerificationId(verificationId).catch(() => {});
+        }
+
         await this.verificationRepository.updateVerification(verificationId, {
           verificationStatus: AADHAAR_VERIFICATION_STATUS.FAILED,
           errorDetails: {
@@ -576,17 +809,19 @@ class AadhaarVerificationService {
       });
     }
 
-    // 7. Update verification status in PostgreSQL
+    // 12. Update verification status in PostgreSQL
     const verifiedAt = new Date();
     const updatedConsent = {
       ...(verification.consentRecord || {}),
-      maskedAadhaar: docData.maskedAadhaar || null,
+      maskedAadhaar: identityInfo.maskedAadhaar,
+      verifiedName: identityInfo.verifiedName,
       retentionPermitted: isRetentionPermitted,
       verifiedAt: verifiedAt.toISOString(),
     };
 
     const updatedVerification = await this.verificationRepository.updateVerification(verificationId, {
       verificationStatus: AADHAAR_VERIFICATION_STATUS.VERIFIED,
+      identityHash,
       storageBucket,
       storagePath,
       verifiedAt,
@@ -594,7 +829,7 @@ class AadhaarVerificationService {
       consentRecord: updatedConsent,
     });
 
-    // 8. Update customer_documents table so existing KYC checks recognize customer as verified
+    // 13. Update customer_documents table so existing KYC checks recognize customer as verified
     try {
       await this.documentRepository.create({
         userId: customerId,
@@ -604,7 +839,8 @@ class AadhaarVerificationService {
         metadata: {
           verificationId,
           provider: verification.provider,
-          maskedAadhaar: docData.maskedAadhaar || null,
+          maskedAadhaar: identityInfo.maskedAadhaar,
+          verifiedName: identityInfo.verifiedName,
           source: 'DIGILOCKER_XML',
         },
         verifiedAt,
@@ -615,7 +851,7 @@ class AadhaarVerificationService {
       });
     }
 
-    // 9. Update Redis session state with short retention to handle immediate callback replays
+    // 14. Update Redis session state with short retention to handle immediate callback replays
     if (this.redisClient && typeof this.redisClient.set === 'function') {
       try {
         await this.redisClient.set(
@@ -631,7 +867,7 @@ class AadhaarVerificationService {
       } catch (_) {}
     }
 
-    // 10. Audit event: VERIFICATION_COMPLETED
+    // 15. Audit event: VERIFICATION_COMPLETED
     await this.verificationRepository.createAuditEvent({
       verificationId,
       customerId,
@@ -640,21 +876,22 @@ class AadhaarVerificationService {
       details: {
         verifiedAt: verifiedAt.toISOString(),
         hasStoragePath: Boolean(storagePath),
-        maskedAadhaar: docData.maskedAadhaar || null,
+        maskedAadhaar: identityInfo.maskedAadhaar,
       },
     });
 
     logger.info('[AADHAAR_SERVICE] Aadhaar verification completed successfully', {
       customerId,
       verificationId,
-      maskedAadhaar: docData.maskedAadhaar || null,
+      maskedAadhaar: identityInfo.maskedAadhaar,
     });
 
     return {
       status: AADHAAR_VERIFICATION_STATUS.VERIFIED,
       verificationId,
+      verifiedName: identityInfo.verifiedName,
+      maskedAadhaar: identityInfo.maskedAadhaar,
       message: 'Aadhaar verification completed successfully.',
-      maskedAadhaar: docData.maskedAadhaar || null,
     };
   }
 
@@ -676,6 +913,7 @@ class AadhaarVerificationService {
         verificationStatus: AADHAAR_VERIFICATION_STATUS.NOT_VERIFIED,
         isVerified: false,
         verifiedAt: null,
+        verifiedName: null,
         maskedAadhaar: null,
         lastAttempt: null,
       };
@@ -685,6 +923,7 @@ class AadhaarVerificationService {
       verificationStatus: latest.verificationStatus,
       isVerified: latest.verificationStatus === AADHAAR_VERIFICATION_STATUS.VERIFIED,
       verifiedAt: latest.verifiedAt,
+      verifiedName: latest.consentRecord?.verifiedName || null,
       maskedAadhaar: latest.consentRecord?.maskedAadhaar || null,
       lastAttempt: latest.createdAt,
       provider: latest.provider,

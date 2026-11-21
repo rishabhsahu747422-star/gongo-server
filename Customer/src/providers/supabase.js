@@ -692,6 +692,7 @@ module.exports = {
   resetSupabaseClient,
   verifyIdToken,
   // Storage operations
+  resolveBucketForKey,
   createPresignedPutUrl,
   createPresignedGetUrl,
   headObject,

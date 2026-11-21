@@ -355,6 +355,11 @@ const env = cleanEnv(process.env, {
     default: 'gongo-customers',
     docs: 'Private Supabase Storage bucket for storing verified Aadhaar XML files.',
   }),
+  AADHAAR_HMAC_SECRET: str({
+    default: 'gongo-aadhaar-identity-hmac-secret-v1',
+    devDefault: 'gongo-aadhaar-identity-hmac-secret-v1',
+    docs: 'Server-side secret used for keyed HMAC identity hash calculation to prevent duplicate Aadhaar verifications.',
+  }),
 
   // ── Development Auth Tokens (dev-token-<phone>) ──────────────
   CUSTOMER_DEV_AUTH_ENABLED: bool({

@@ -12,6 +12,7 @@ const {
   BadRequestError,
   NotFoundError,
   ForbiddenError,
+  ConflictError,
   ServiceUnavailableError,
 } = require('../../../src/errors');
 
@@ -46,6 +47,7 @@ describe('DigiLocker Aadhaar XML Verification Service Unit Tests', () => {
   beforeEach(() => {
     mockCustomerRepo = {
       findById: jest.fn().mockResolvedValue(mockActiveUser),
+      updateProfile: jest.fn().mockResolvedValue({ ...mockActiveUser, name: 'Test User' }),
     };
 
     mockDocumentRepo = {
@@ -59,6 +61,10 @@ describe('DigiLocker Aadhaar XML Verification Service Unit Tests', () => {
       findLatestByCustomerId: jest.fn(),
       updateVerification: jest.fn().mockImplementation((id, data) => Promise.resolve({ id, customerId, ...data })),
       findByProviderReferenceId: jest.fn().mockResolvedValue(null),
+      findIdentityLinkByHash: jest.fn().mockResolvedValue(null),
+      findIdentityLinkByCustomerId: jest.fn().mockResolvedValue(null),
+      upsertIdentityLink: jest.fn().mockResolvedValue({ id: 'link-1' }),
+      deleteIdentityLinkByVerificationId: jest.fn().mockResolvedValue(true),
       query: jest.fn().mockResolvedValue({ rows: [] }),
       createAuditEvent: jest.fn().mockResolvedValue({ id: 'audit-1' }),
       findAuditsByVerificationId: jest.fn().mockResolvedValue([]),
@@ -719,6 +725,62 @@ describe('DigiLocker Aadhaar XML Verification Service Unit Tests', () => {
       expect(masked).toBe('XXXX-XXXX-1234');
       expect(masked).not.toMatch(/^\d{12}$/);
     });
+
+    it('extracts identity info including verified name from valid Aadhaar XML', () => {
+      const info = AadhaarVerificationService.extractIdentityInfoFromXml(validAadhaarXml);
+      expect(info.verifiedName).toBe('Test User');
+      expect(info.dob).toBe('01-01-1990');
+      expect(info.gender).toBe('M');
+      expect(info.maskedAadhaar).toBe('XXXX-XXXX-1234');
+    });
+
+    it('extracts identity info from Sandbox printLetterBarcodeData format', () => {
+      const sandboxXml = `<?xml version="1.0" encoding="UTF-8"?><PrintLetterBarcodeData uid="XXXXXXXX5678" name="Rahul Sharma" dob="15-08-1985" gender="M"/>`;
+      const info = AadhaarVerificationService.extractIdentityInfoFromXml(sandboxXml);
+      expect(info.verifiedName).toBe('Rahul Sharma');
+      expect(info.dob).toBe('15-08-1985');
+      expect(info.gender).toBe('M');
+      expect(info.maskedAadhaar).toBe('XXXX-XXXX-5678');
+    });
+
+    it('throws AADHAAR_MISSING_POI when Poi element is missing from XML', () => {
+      const noPoiXml = `<?xml version="1.0" encoding="UTF-8"?><UidData uid="XXXXXXXX1234"><Poa co="Care of" /></UidData>`;
+      expect(() => AadhaarVerificationService.extractIdentityInfoFromXml(noPoiXml)).toThrow(BadRequestError);
+      expect(() => AadhaarVerificationService.extractIdentityInfoFromXml(noPoiXml)).toThrow('Missing <Poi> element');
+    });
+
+    it('throws AADHAAR_MISSING_NAME when name attribute is empty or whitespace', () => {
+      const emptyNameXml = `<?xml version="1.0" encoding="UTF-8"?><UidData uid="XXXXXXXX1234"><Poi name="   " dob="01-01-1990" gender="F"/></UidData>`;
+      expect(() => AadhaarVerificationService.extractIdentityInfoFromXml(emptyNameXml)).toThrow(BadRequestError);
+      expect(() => AadhaarVerificationService.extractIdentityInfoFromXml(emptyNameXml)).toThrow('Missing or empty name attribute');
+    });
+
+    it('prevents XXE injection and rejects payloads containing external entities', () => {
+      const xxeXml = `<?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE foo [ <!ENTITY xxe SYSTEM "file:///etc/passwd"> ]>
+        <UidData uid="XXXXXXXX1234">
+          <Poi name="&xxe;" dob="01-01-1990" gender="F"/>
+        </UidData>`;
+      expect(() => AadhaarVerificationService.extractIdentityInfoFromXml(xxeXml)).toThrow(BadRequestError);
+      expect(() => AadhaarVerificationService.extractIdentityInfoFromXml(xxeXml)).toThrow('External entities are not supported');
+    });
+
+    it('computes deterministic HMAC-SHA256 identity hash with normalization', () => {
+      const hash1 = AadhaarVerificationService.computeIdentityHash({
+        uid: 'XXXXXXXX1234',
+        dob: '01-01-1990',
+        gender: 'F',
+        verifiedName: 'Jane Doe',
+      });
+      const hash2 = AadhaarVerificationService.computeIdentityHash({
+        uid: 'XXXXXXXX1234',
+        dob: '01-01-1990',
+        gender: 'f',
+        verifiedName: '  Jane   Doe  ',
+      });
+      expect(hash1).toHaveLength(64);
+      expect(hash1).toBe(hash2);
+    });
   });
 
   describe('4. Status Retrieval & Signed URL Security', () => {
@@ -771,6 +833,105 @@ describe('DigiLocker Aadhaar XML Verification Service Unit Tests', () => {
       });
 
       await expect(service.getSignedDocumentUrl(customerId, verificationId)).rejects.toThrow(ForbiddenError);
+    });
+  });
+
+  describe('5. Identity Uniqueness & Profile Synchronization', () => {
+    beforeEach(() => {
+      mockRedis.get.mockImplementation((key) => {
+        if (key && key.includes(sampleState)) {
+          return Promise.resolve(JSON.stringify({
+            verificationId,
+            customerId,
+            state: sampleState,
+            redirectUri: 'https://api.gongo.in/api/v1/customers/aadhaar/callback',
+          }));
+        }
+        return Promise.resolve(null);
+      });
+
+      mockVerificationRepo.findById.mockResolvedValue({
+        id: verificationId,
+        customerId,
+        documentType: 'AADHAAR',
+        verificationStatus: AADHAAR_VERIFICATION_STATUS.IN_PROGRESS,
+        provider: AADHAAR_PROVIDERS.DIGILOCKER_SANDBOX,
+        providerReferenceId: 'digilocker_ref_123',
+        consentRecord: { consentGiven: true },
+      });
+    });
+
+    it('synchronizes customer profile name on successful callback', async () => {
+      await service.handleCallback({
+        state: sampleState,
+        code: 'valid_auth_code_123',
+      });
+
+      expect(mockCustomerRepo.updateProfile).toHaveBeenCalledWith(
+        customerId,
+        expect.objectContaining({ name: 'Test User' })
+      );
+    });
+
+    it('rejects callback with 409 Conflict when Aadhaar identity is already linked to another customer', async () => {
+      mockVerificationRepo.findIdentityLinkByHash.mockResolvedValueOnce({
+        customer_id: otherCustomerId,
+        identity_hash: 'existing_hash_123',
+      });
+
+      await expect(
+        service.handleCallback({
+          state: sampleState,
+          code: 'valid_auth_code_123',
+        })
+      ).rejects.toThrow(ConflictError);
+
+      expect(mockCustomerRepo.updateProfile).not.toHaveBeenCalled();
+      expect(mockVerificationRepo.updateVerification).toHaveBeenCalledWith(
+        verificationId,
+        expect.objectContaining({
+          verificationStatus: AADHAAR_VERIFICATION_STATUS.FAILED,
+          errorDetails: expect.objectContaining({
+            reason: 'IDENTITY_ALREADY_LINKED',
+          }),
+        })
+      );
+    });
+
+    it('allows re-verification when Aadhaar identity is linked to the same customer', async () => {
+      mockVerificationRepo.findIdentityLinkByHash.mockResolvedValueOnce({
+        customer_id: customerId, // Same customer!
+        identity_hash: 'existing_hash_123',
+      });
+
+      const result = await service.handleCallback({
+        state: sampleState,
+        code: 'valid_auth_code_123',
+      });
+
+      expect(result.status).toBe(AADHAAR_VERIFICATION_STATUS.VERIFIED);
+      expect(mockVerificationRepo.upsertIdentityLink).toHaveBeenCalledWith(
+        expect.objectContaining({
+          customerId,
+          verificationId,
+        })
+      );
+    });
+
+    it('cleans up reserved identity link when storage upload fails', async () => {
+      mockStorageBucket.upload.mockResolvedValueOnce({
+        data: null,
+        error: { message: 'Storage network timeout' },
+      });
+
+      await expect(
+        service.handleCallback({
+          state: sampleState,
+          code: 'valid_auth_code_123',
+        })
+      ).rejects.toThrow(ServiceUnavailableError);
+
+      expect(mockVerificationRepo.deleteIdentityLinkByVerificationId).toHaveBeenCalledWith(verificationId);
     });
   });
 });

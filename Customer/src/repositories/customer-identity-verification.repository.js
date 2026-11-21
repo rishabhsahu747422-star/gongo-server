@@ -25,6 +25,7 @@ class CustomerIdentityVerificationRepository extends BaseRepository {
       storageBucket: row.storage_bucket || null,
       storagePath: row.storage_path || row.document_reference || null,
       verifiedAt: row.verified_at || null,
+      identityHash: row.identity_hash || null,
       consentRecord: row.consent_record || row.verification_metadata || {},
       errorDetails: row.error_details || null,
       createdAt: row.created_at,
@@ -163,6 +164,7 @@ class CustomerIdentityVerificationRepository extends BaseRepository {
    */
   async updateVerification(id, {
     verificationStatus,
+    identityHash,
     storageBucket,
     storagePath,
     verifiedAt,
@@ -177,6 +179,10 @@ class CustomerIdentityVerificationRepository extends BaseRepository {
     if (verificationStatus !== undefined) {
       fields.push(`verification_status = $${idx++}`);
       values.push(verificationStatus);
+    }
+    if (identityHash !== undefined) {
+      fields.push(`identity_hash = $${idx++}`);
+      values.push(identityHash);
     }
     if (storageBucket !== undefined) {
       fields.push(`storage_bucket = $${idx++}`);
@@ -274,6 +280,72 @@ class CustomerIdentityVerificationRepository extends BaseRepository {
     `;
     const result = await this.query(text, [verificationId]);
     return result.rows;
+  }
+
+  /**
+   * Finds an existing identity link by its cryptographic identity hash.
+   *
+   * @param {string} identityHash
+   * @returns {Promise<object|null>}
+   */
+  async findIdentityLinkByHash(identityHash) {
+    const text = 'SELECT * FROM customer_identity_links WHERE identity_hash = $1 LIMIT 1;';
+    const result = await this.query(text, [identityHash]);
+    return result.rows[0] || null;
+  }
+
+  /**
+   * Finds an existing identity link for a customer by document type.
+   *
+   * @param {string} customerId
+   * @param {string} [idType='AADHAAR']
+   * @returns {Promise<object|null>}
+   */
+  async findIdentityLinkByCustomerId(customerId, idType = 'AADHAAR') {
+    const text = 'SELECT * FROM customer_identity_links WHERE customer_id = $1 AND id_type = $2 LIMIT 1;';
+    const result = await this.query(text, [customerId, idType]);
+    return result.rows[0] || null;
+  }
+
+  /**
+   * Upserts an identity link for a customer.
+   * If the same identity is already linked to this customer, updates the verification reference.
+   * If linked to another customer, database unique constraint uq_customer_identity_links_hash
+   * prevents conflicting inserts.
+   *
+   * @param {object} params
+   * @param {string} params.customerId
+   * @param {string} params.identityHash
+   * @param {string} [params.idType='AADHAAR']
+   * @param {string} [params.verificationId]
+   * @returns {Promise<object>}
+   */
+  async upsertIdentityLink({ customerId, identityHash, idType = 'AADHAAR', verificationId = null }) {
+    const text = `
+      INSERT INTO customer_identity_links (
+        customer_id, identity_hash, id_type, verification_id
+      )
+      VALUES ($1, $2, $3, $4)
+      ON CONFLICT (identity_hash) DO UPDATE
+      SET verification_id = EXCLUDED.verification_id,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE customer_identity_links.customer_id = $1
+      RETURNING *;
+    `;
+    const result = await this.query(text, [customerId, identityHash, idType, verificationId]);
+    return result.rows[0] || null;
+  }
+
+  /**
+   * Deletes an identity link by verification ID (for rollback/cleanup on partial failures).
+   *
+   * @param {string} verificationId
+   * @returns {Promise<boolean>}
+   */
+  async deleteIdentityLinkByVerificationId(verificationId) {
+    const text = 'DELETE FROM customer_identity_links WHERE verification_id = $1 RETURNING id;';
+    const result = await this.query(text, [verificationId]);
+    return (result.rowCount || 0) > 0;
   }
 }
 
