@@ -934,4 +934,114 @@ describe('DigiLocker Aadhaar XML Verification Service Unit Tests', () => {
       expect(mockVerificationRepo.deleteIdentityLinkByVerificationId).toHaveBeenCalledWith(verificationId);
     });
   });
+
+  describe('6. 12-Digit Aadhaar Availability & Fingerprint Verification', () => {
+    it('normalizes valid 12-digit Aadhaar input and rejects malformed formats', () => {
+      expect(AadhaarVerificationService.normalizeAadhaarNumber('5421 8976 3412')).toBe('542189763412');
+      expect(AadhaarVerificationService.normalizeAadhaarNumber('5421-8976-3412')).toBe('542189763412');
+
+      // Invalid lengths or characters
+      expect(() => AadhaarVerificationService.normalizeAadhaarNumber('12345')).toThrow(BadRequestError);
+      expect(() => AadhaarVerificationService.normalizeAadhaarNumber('1234567890123')).toThrow(BadRequestError);
+      expect(() => AadhaarVerificationService.normalizeAadhaarNumber('5421ABCD3412')).toThrow(BadRequestError);
+      expect(() => AadhaarVerificationService.normalizeAadhaarNumber('')).toThrow(BadRequestError);
+      expect(() => AadhaarVerificationService.normalizeAadhaarNumber(null)).toThrow(BadRequestError);
+
+      // Repetitive patterns
+      expect(() => AadhaarVerificationService.normalizeAadhaarNumber('000000000000')).toThrow(BadRequestError);
+      expect(() => AadhaarVerificationService.normalizeAadhaarNumber('111111111111')).toThrow(BadRequestError);
+    });
+
+    it('computes deterministic keyed HMAC fingerprint and fails safely when secret is missing', () => {
+      const fp1 = AadhaarVerificationService.computeAadhaarFingerprint('542189763412', 'test-secret-key-1');
+      const fp2 = AadhaarVerificationService.computeAadhaarFingerprint('542189763412', 'test-secret-key-1');
+      const fpOther = AadhaarVerificationService.computeAadhaarFingerprint('987654321098', 'test-secret-key-1');
+
+      expect(fp1).toHaveLength(64);
+      expect(fp1).toBe(fp2);
+      expect(fp1).not.toBe(fpOther);
+
+      // Fails safely if secret is missing or empty
+      expect(() => AadhaarVerificationService.computeAadhaarFingerprint('542189763412', '')).toThrow(ServiceUnavailableError);
+      expect(() => AadhaarVerificationService.computeAadhaarFingerprint('542189763412', null)).toThrow(ServiceUnavailableError);
+    });
+
+    it('confirms availability when identity is unlinked', async () => {
+      mockVerificationRepo.findIdentityLinkByHash.mockResolvedValueOnce(null);
+      mockVerificationRepo.query.mockResolvedValueOnce({ rows: [] });
+
+      const res = await service.checkAadhaarAvailability(customerId, '5421 8976 3412');
+      expect(res.isAvailable).toBe(true);
+      expect(res.message).toBe('Aadhaar is available for verification.');
+      // Never exposes raw Aadhaar or fingerprint
+      expect(res).not.toHaveProperty('identityHash');
+      expect(res).not.toHaveProperty('aadhaarNumber');
+    });
+
+    it('allows availability when identity is already linked to the SAME customer (re-verification)', async () => {
+      mockVerificationRepo.findIdentityLinkByHash.mockResolvedValueOnce({
+        customer_id: customerId,
+        identity_hash: 'mock_fingerprint_hex',
+      });
+
+      const res = await service.checkAadhaarAvailability(customerId, '5421 8976 3412');
+      expect(res.isAvailable).toBe(true);
+      expect(res.message).toBe('Aadhaar is available for verification.');
+    });
+
+    it('blocks availability when identity is already linked to ANOTHER customer', async () => {
+      mockVerificationRepo.findIdentityLinkByHash.mockResolvedValueOnce({
+        customer_id: otherCustomerId,
+        identity_hash: 'mock_fingerprint_hex',
+      });
+
+      const res = await service.checkAadhaarAvailability(customerId, '5421 8976 3412');
+      expect(res.isAvailable).toBe(false);
+      expect(res.reason).toBe('IDENTITY_ALREADY_LINKED');
+      expect(res.message).toBe('This Aadhaar is already associated with a verified account.');
+      // Does NOT reveal the other customer ID
+      expect(res).not.toHaveProperty('customerId');
+      expect(res).not.toHaveProperty('otherCustomerId');
+    });
+
+    it('rejects initiation when entered Aadhaar is already linked to another customer', async () => {
+      mockVerificationRepo.findIdentityLinkByHash.mockResolvedValueOnce({
+        customer_id: otherCustomerId,
+        identity_hash: 'mock_fingerprint_hex',
+      });
+
+      await expect(
+        service.initiateVerification(customerId, { aadhaarNumber: '5421 8976 3412' })
+      ).rejects.toThrow(ConflictError);
+    });
+
+    it('rejects callback with AADHAAR_IDENTITY_MISMATCH if XML last 4 digits do not match entered number', async () => {
+      mockVerificationRepo.findById.mockResolvedValueOnce({
+        id: verificationId,
+        customerId,
+        verificationStatus: AADHAAR_VERIFICATION_STATUS.IN_PROGRESS,
+        provider: AADHAAR_PROVIDERS.DIGILOCKER_SANDBOX,
+        identityHash: null,
+        consentRecord: {
+          last4: '3412', // Customer entered number ending in 3412
+        },
+      });
+
+      mockDigiLocker.fetchAadhaarXml.mockResolvedValueOnce({
+        xmlContent: `<?xml version="1.0" encoding="UTF-8"?>
+          <UidData uid="XXXXXXXX9999">
+            <Poi name="Mismatched Person" dob="01-01-1990" gender="M"/>
+          </UidData>`,
+        documentType: 'AADHAAR',
+        isAuthorized: true,
+      });
+
+      await expect(
+        service.handleCallback({
+          state: sampleState,
+          code: 'mismatch_code_123',
+        })
+      ).rejects.toThrow(BadRequestError);
+    });
+  });
 });

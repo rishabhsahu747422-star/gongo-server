@@ -185,11 +185,110 @@ class AadhaarVerificationService {
   }
 
   /**
+   * Normalizes a 12-digit Aadhaar number string.
+   * Strips spaces and hyphens, validates exact 12 numeric digits, and rejects repeating sequences.
+   *
+   * @param {string} aadhaar
+   * @returns {string} 12-digit numeric string
+   */
+  static normalizeAadhaarNumber(aadhaar) {
+    if (!aadhaar || typeof aadhaar !== 'string') {
+      throw new BadRequestError('Aadhaar number is required and must be a string', 'INVALID_AADHAAR_FORMAT');
+    }
+    const clean = aadhaar.replace(/[\s-]/g, '');
+    if (!/^\d{12}$/.test(clean)) {
+      throw new BadRequestError('Aadhaar number must contain exactly 12 digits', 'INVALID_AADHAAR_FORMAT');
+    }
+    if (/^(\d)\1{11}$/.test(clean)) {
+      throw new BadRequestError('Invalid Aadhaar number pattern', 'INVALID_AADHAAR_FORMAT');
+    }
+    return clean;
+  }
+
+  /**
+   * Computes keyed HMAC-SHA256 identity fingerprint from normalized 12-digit Aadhaar.
+   * Fails safely if AADHAAR_HMAC_SECRET is missing.
+   *
+   * @param {string} normalizedAadhaar
+   * @param {string} [secret]
+   * @returns {string} 64-character hex string
+   */
+  static computeAadhaarFingerprint(normalizedAadhaar, secret = env.AADHAAR_HMAC_SECRET) {
+    if (!secret) {
+      logger.error('[AADHAAR_SERVICE] AADHAAR_HMAC_SECRET is missing or not configured');
+      throw new ServiceUnavailableError(
+        'Aadhaar verification service is currently unavailable',
+        'AADHAAR_SECRET_MISSING'
+      );
+    }
+    return crypto.createHmac('sha256', secret).update(normalizedAadhaar).digest('hex');
+  }
+
+  /**
+   * Checks whether an entered 12-digit Aadhaar number is available for verification.
+   * Returns available: true if not linked to another verified account, or false with generic message.
+   * Never leaks raw Aadhaar numbers, fingerprints, or owner customer IDs.
+   *
+   * @param {string} customerId
+   * @param {string} aadhaarNumber
+   * @returns {Promise<{ isAvailable: boolean, reason?: string, message: string }>}
+   */
+  async checkAadhaarAvailability(customerId, aadhaarNumber) {
+    const normalized = AadhaarVerificationService.normalizeAadhaarNumber(aadhaarNumber);
+    const fingerprint = AadhaarVerificationService.computeAadhaarFingerprint(normalized);
+
+    // 1. Check verified identity links table
+    if (typeof this.verificationRepository.findIdentityLinkByHash === 'function') {
+      const existingLink = await this.verificationRepository.findIdentityLinkByHash(fingerprint);
+      if (existingLink) {
+        const linkCustomerId = existingLink.customer_id || existingLink.customerId;
+        if (linkCustomerId !== customerId) {
+          logger.info('[AADHAAR_SERVICE] Availability check: identity already linked to another customer');
+          return {
+            isAvailable: false,
+            reason: 'IDENTITY_ALREADY_LINKED',
+            message: 'This Aadhaar is already associated with a verified account.',
+          };
+        }
+        // Same customer re-verifying
+        return {
+          isAvailable: true,
+          message: 'Aadhaar is available for verification.',
+        };
+      }
+    }
+
+    // 2. Check verified records in customer_identity_verifications table
+    if (typeof this.verificationRepository.query === 'function') {
+      const verifCheck = await this.verificationRepository.query(
+        `SELECT customer_id FROM customer_identity_verifications
+         WHERE identity_hash = $1 AND UPPER(verification_status) = 'VERIFIED' AND customer_id != $2
+         LIMIT 1;`,
+        [fingerprint, customerId]
+      );
+      if (verifCheck && verifCheck.rows && verifCheck.rows.length > 0) {
+        logger.info('[AADHAAR_SERVICE] Availability check: verified record found for another customer');
+        return {
+          isAvailable: false,
+          reason: 'IDENTITY_ALREADY_LINKED',
+          message: 'This Aadhaar is already associated with a verified account.',
+        };
+      }
+    }
+
+    return {
+      isAvailable: true,
+      message: 'Aadhaar is available for verification.',
+    };
+  }
+
+  /**
    * Initiates DigiLocker Aadhaar verification for an authenticated customer.
    *
    * @param {string} customerId - Authenticated customer UUID from token
    * @param {object} options
    * @param {string} [options.redirectUri] - Custom callback URI
+   * @param {string} [options.aadhaarNumber] - Optional 12-digit Aadhaar input
    * @param {string} [options.ipAddress] - Client IP for consent log
    * @param {string} [options.userAgent] - Client User-Agent
    * @returns {Promise<{ verificationId: string, authorizationUrl: string, state: string, provider: string }>}
@@ -202,6 +301,26 @@ class AadhaarVerificationService {
     }
     if (!user.isActive) {
       throw new ForbiddenError('Customer account is deactivated', 'AUTH_USER_INACTIVE');
+    }
+
+    // Pre-validate Aadhaar number if supplied
+    let aadhaarFingerprint = null;
+    let aadhaarLast4 = null;
+    if (options.aadhaarNumber) {
+      const normalized = AadhaarVerificationService.normalizeAadhaarNumber(options.aadhaarNumber);
+      aadhaarFingerprint = AadhaarVerificationService.computeAadhaarFingerprint(normalized);
+      aadhaarLast4 = normalized.slice(-4);
+
+      // Enforce duplicate check at initiation
+      if (typeof this.verificationRepository.findIdentityLinkByHash === 'function') {
+        const existingLink = await this.verificationRepository.findIdentityLinkByHash(aadhaarFingerprint);
+        if (existingLink && (existingLink.customer_id || existingLink.customerId) !== customerId) {
+          throw new ConflictError(
+            'This Aadhaar is already associated with a verified account.',
+            'IDENTITY_ALREADY_LINKED'
+          );
+        }
+      }
     }
 
     // 2. Generate unique IDs and cryptographic state
@@ -223,6 +342,8 @@ class AadhaarVerificationService {
       state: stateToken,
       ipAddress: options.ipAddress || null,
       userAgent: options.userAgent || null,
+      ...(aadhaarLast4 ? { last4: aadhaarLast4 } : {}),
+      ...(aadhaarFingerprint ? { aadhaarFingerprint } : {}),
     };
 
     // 4. Persist pending record in PostgreSQL
@@ -234,6 +355,7 @@ class AadhaarVerificationService {
       provider: session.provider || AADHAAR_PROVIDERS.DIGILOCKER_SANDBOX,
       providerReferenceId: session.providerReferenceId || null,
       consentRecord,
+      identityHash: null, // Written strictly upon authoritative verification completion in handleCallback
     });
 
     // 5. Store session in Redis with 15m TTL
@@ -242,6 +364,8 @@ class AadhaarVerificationService {
       customerId,
       state: stateToken,
       redirectUri,
+      ...(aadhaarFingerprint ? { aadhaarFingerprint } : {}),
+      ...(aadhaarLast4 ? { last4: aadhaarLast4 } : {}),
       createdAt: new Date().toISOString(),
     };
 
@@ -606,8 +730,26 @@ class AadhaarVerificationService {
       throw xmlErr;
     }
 
-    // 7. Compute deterministic keyed HMAC-SHA256 identity hash
+    // 7. Authoritative identity hash derived strictly from validated provider response (<UidData>, <Poi>)
     const identityHash = AadhaarVerificationService.computeIdentityHash(identityInfo);
+
+    // Cross-check entered Aadhaar suffix if entered by customer during session initiation
+    const sessionLast4 = verification.consentRecord?.last4;
+    const uidDigits = (identityInfo.uid || identityInfo.maskedAadhaar || '').replace(/\D/g, '');
+    if (sessionLast4 && uidDigits.length >= 4) {
+      const xmlLast4 = uidDigits.slice(-4);
+      if (xmlLast4 !== sessionLast4) {
+        logger.warn('[AADHAAR_SERVICE] Aadhaar last 4 digits mismatch between entered input and XML', {
+          verificationId,
+          customerId,
+        });
+        await this.verificationRepository.updateVerification(verificationId, {
+          verificationStatus: AADHAAR_VERIFICATION_STATUS.FAILED,
+          errorDetails: { reason: 'AADHAAR_IDENTITY_MISMATCH' },
+        });
+        throw new BadRequestError('The verified Aadhaar does not match the entered Aadhaar number', 'AADHAAR_IDENTITY_MISMATCH');
+      }
+    }
 
     // 8. Enforce single-account identity uniqueness (Anti-Duplicate Verification Check)
     if (typeof this.verificationRepository.findIdentityLinkByHash === 'function') {

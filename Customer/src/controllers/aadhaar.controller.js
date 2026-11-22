@@ -12,18 +12,43 @@ class AadhaarController {
   }
 
   /**
+   * POST /api/v1/customers/me/aadhaar/check-availability
+   * Authenticated customer checks whether a 12-digit Aadhaar identity is available for verification.
+   */
+  async checkAvailability(req, res, next) {
+    try {
+      const customerId = req.user.id;
+      const { aadhaarNumber, aadhaar_number, aadhaar } = req.body || {};
+      const inputAadhaar = aadhaarNumber || aadhaar_number || aadhaar;
+
+      const result = await this.aadhaarService.checkAadhaarAvailability(customerId, inputAadhaar);
+
+      return sendSuccess(
+        res,
+        result,
+        result.message || 'Aadhaar availability checked',
+        200,
+      );
+    } catch (err) {
+      return next(err);
+    }
+  }
+
+  /**
    * POST /api/v1/customers/me/aadhaar/initiate
    * Authenticated customer requests session initiation.
    */
   async initiateVerification(req, res, next) {
     try {
       const customerId = req.user.id;
-      const { redirectUri } = req.body || {};
+      const { redirectUri, aadhaarNumber, aadhaar_number, aadhaar } = req.body || {};
+      const inputAadhaar = aadhaarNumber || aadhaar_number || aadhaar;
       const ipAddress = req.ip || req.headers['x-forwarded-for'];
       const userAgent = req.headers['user-agent'];
 
       const result = await this.aadhaarService.initiateVerification(customerId, {
         redirectUri,
+        aadhaarNumber: inputAadhaar,
         ipAddress,
         userAgent,
       });

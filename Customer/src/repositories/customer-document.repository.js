@@ -115,13 +115,21 @@ class CustomerDocumentRepository extends BaseRepository {
     const enrichedMetadata = { ...metadata };
     if (side) enrichedMetadata.side = side;
 
+    let finalDocNumber = documentNumber;
+    if (docTypeLower.includes('aadhaar') && finalDocNumber) {
+      const clean = String(finalDocNumber).replace(/\D/g, '');
+      if (clean.length === 12) {
+        finalDocNumber = `XXXX XXXX ${clean.slice(-4)}`;
+      }
+    }
+
     if (!storagePath) {
       throw new Error('storageKey is required for customer document creation');
     }
 
     try {
       // 1. Try authoritative Supabase table schema
-      if (documentNumber !== null || verifiedAt !== null) {
+      if (finalDocNumber !== null || verifiedAt !== null) {
         const text = `
           INSERT INTO customer_documents (
             customer_id,
@@ -137,7 +145,7 @@ class CustomerDocumentRepository extends BaseRepository {
         const result = await this.query(text, [
           ownerId,
           docTypeLower,
-          documentNumber,
+          finalDocNumber,
           storagePath,
           storagePath,
           statusLower,
@@ -326,14 +334,22 @@ class CustomerDocumentRepository extends BaseRepository {
     const params = [];
     let idx = 1;
 
+    let safeDocNumber = documentNumber;
+    if (docTypeLower.includes('aadhaar') && safeDocNumber !== undefined && safeDocNumber !== null) {
+      const clean = String(safeDocNumber).replace(/\D/g, '');
+      if (clean.length === 12) {
+        safeDocNumber = `XXXX XXXX ${clean.slice(-4)}`;
+      }
+    }
+
     if (status !== undefined) {
       setClauses.push(`verification_status = $${idx}`);
       params.push(statusLower);
       idx += 1;
     }
-    if (documentNumber !== undefined) {
+    if (safeDocNumber !== undefined) {
       setClauses.push(`document_number = $${idx}`);
-      params.push(documentNumber);
+      params.push(safeDocNumber);
       idx += 1;
     }
     if (verifiedAt !== undefined) {

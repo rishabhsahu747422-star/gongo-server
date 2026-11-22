@@ -122,6 +122,16 @@ router.post(
 // ── DigiLocker Aadhaar Verification ──────────────────────────────────────────
 
 /**
+ * @route   POST /api/v1/customers/me/aadhaar/check-availability
+ * @desc    Check whether a 12-digit Aadhaar identity is available for verification
+ * @access  Private (Customer only)
+ */
+router.post(
+  '/me/aadhaar/check-availability',
+  (req, res, next) => aadhaarController.checkAvailability(req, res, next),
+);
+
+/**
  * @route   POST /api/v1/customers/me/aadhaar/initiate
  * @desc    Initiate DigiLocker Aadhaar verification session
  * @access  Private (Customer only)

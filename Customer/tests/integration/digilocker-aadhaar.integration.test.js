@@ -644,4 +644,109 @@ describe('DigiLocker Aadhaar Verification Integration Tests', () => {
       expect(res.body.data.verificationStatus.aadhaarStatus).toBe('VERIFIED');
     });
   });
+
+  describe('POST /api/v1/customers/me/aadhaar/check-availability', () => {
+    it('returns 401 without Bearer token', async () => {
+      const res = await request(app)
+        .post('/api/v1/customers/me/aadhaar/check-availability')
+        .send({ aadhaarNumber: '5421 8976 3412' });
+
+      expect(res.status).toBe(401);
+    });
+
+    it('returns 400 when Aadhaar number is invalid or malformed', async () => {
+      const res = await request(app)
+        .post('/api/v1/customers/me/aadhaar/check-availability')
+        .set('Authorization', 'Bearer token-customer-b')
+        .send({ aadhaarNumber: '12345' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe('INVALID_AADHAAR_FORMAT');
+    });
+
+    it('returns 400 when Aadhaar number contains repeating digits', async () => {
+      const res = await request(app)
+        .post('/api/v1/customers/me/aadhaar/check-availability')
+        .set('Authorization', 'Bearer token-customer-b')
+        .send({ aadhaarNumber: '000000000000' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe('INVALID_AADHAAR_FORMAT');
+    });
+
+    it('returns isAvailable: true for an unlinked 12-digit Aadhaar number', async () => {
+      const res = await request(app)
+        .post('/api/v1/customers/me/aadhaar/check-availability')
+        .set('Authorization', 'Bearer token-customer-b')
+        .send({ aadhaarNumber: '7654 3210 9876' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.isAvailable).toBe(true);
+      expect(res.body.data.message).toBe('Aadhaar is available for verification.');
+      // Never returns raw Aadhaar or fingerprint
+      expect(res.body.data).not.toHaveProperty('identityHash');
+      expect(res.body.data).not.toHaveProperty('aadhaarNumber');
+    });
+
+    it('returns isAvailable: false with IDENTITY_ALREADY_LINKED when already linked to another customer', async () => {
+      // First link an Aadhaar to customer A in customer_identity_links
+      const testAadhaar = '5421 8976 3412';
+      const normalized = testAadhaar.replace(/\s/g, '');
+      const crypto = require('crypto');
+      const testHash = crypto.createHmac('sha256', process.env.AADHAAR_HMAC_SECRET || 'gongo-aadhaar-identity-hmac-secret-v1')
+        .update(normalized)
+        .digest('hex');
+
+      db.public.none(`
+        INSERT INTO customer_identity_links (id, customer_id, identity_hash, id_type)
+        VALUES ('33333333-3333-4333-8333-333333333333', '${customerA.id}', '${testHash}', 'AADHAAR')
+        ON CONFLICT (identity_hash) DO NOTHING;
+      `);
+
+      try {
+        // Customer B checks availability for customer A's Aadhaar
+        const res = await request(app)
+          .post('/api/v1/customers/me/aadhaar/check-availability')
+          .set('Authorization', 'Bearer token-customer-b')
+          .send({ aadhaarNumber: testAadhaar });
+
+        expect(res.status).toBe(200);
+        expect(res.body.data.isAvailable).toBe(false);
+        expect(res.body.data.reason).toBe('IDENTITY_ALREADY_LINKED');
+        expect(res.body.data.message).toContain('already associated with a verified account');
+        // Does not leak Customer A ID
+        expect(res.body.data).not.toHaveProperty('customerId');
+      } finally {
+        db.public.none(`DELETE FROM customer_identity_links WHERE id = '33333333-3333-4333-8333-333333333333';`);
+      }
+    });
+
+    it('returns isAvailable: true when the SAME customer checks their already linked Aadhaar', async () => {
+      const testAadhaar = '5421 8976 3412';
+      const normalized = testAadhaar.replace(/\s/g, '');
+      const crypto = require('crypto');
+      const testHash = crypto.createHmac('sha256', process.env.AADHAAR_HMAC_SECRET || 'gongo-aadhaar-identity-hmac-secret-v1')
+        .update(normalized)
+        .digest('hex');
+
+      db.public.none(`
+        INSERT INTO customer_identity_links (id, customer_id, identity_hash, id_type)
+        VALUES ('44444444-4444-4444-8444-444444444444', '${customerA.id}', '${testHash}', 'AADHAAR')
+        ON CONFLICT (identity_hash) DO NOTHING;
+      `);
+
+      try {
+        // Customer A checks availability for their own already linked Aadhaar
+        const res = await request(app)
+          .post('/api/v1/customers/me/aadhaar/check-availability')
+          .set('Authorization', 'Bearer token-customer-a')
+          .send({ aadhaarNumber: testAadhaar });
+
+        expect(res.status).toBe(200);
+        expect(res.body.data.isAvailable).toBe(true);
+      } finally {
+        db.public.none(`DELETE FROM customer_identity_links WHERE id = '44444444-4444-4444-8444-444444444444';`);
+      }
+    });
+  });
 });

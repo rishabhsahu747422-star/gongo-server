@@ -76,6 +76,7 @@ class CustomerIdentityVerificationRepository extends BaseRepository {
     provider = 'DIGILOCKER_SANDBOX',
     providerReferenceId = null,
     consentRecord = {},
+    identityHash = null,
   }) {
     const text = `
       INSERT INTO customer_identity_verifications (
@@ -89,9 +90,10 @@ class CustomerIdentityVerificationRepository extends BaseRepository {
         provider_reference_id,
         provider_reference,
         consent_record,
-        verification_metadata
+        verification_metadata,
+        identity_hash
       )
-      VALUES ($1, $2, $3, $4, $5, $5, 'online', $6, $6, $7, $7)
+      VALUES ($1, $2, $3, $4, $5, $5, 'online', $6, $6, $7, $7, $8)
       RETURNING *;
     `;
     const params = [
@@ -102,6 +104,7 @@ class CustomerIdentityVerificationRepository extends BaseRepository {
       provider,
       providerReferenceId,
       JSON.stringify(consentRecord),
+      identityHash,
     ];
 
     const result = await this.query(text, params);

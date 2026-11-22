@@ -394,17 +394,21 @@ class StorageService {
       const targetStatus = isAadhaar ? 'VERIFIED' : 'PENDING';
       const verifiedAt = isAadhaar ? new Date() : null;
 
+      // For Aadhaar, never persist the raw 12-digit plaintext number in database.
+      // Store masked format (XXXX XXXX 1234) for privacy; driving license is kept as-is.
+      const storedDocNumber = isAadhaar ? `XXXX XXXX ${cleanNum.slice(-4)}` : cleanNum;
+
       if (typeof this.documentRepository.updateAllByUserAndType === 'function') {
         await this.documentRepository.updateAllByUserAndType(customerId, normalizedType, {
           status: targetStatus,
-          documentNumber: cleanNum,
+          documentNumber: storedDocNumber,
           verifiedAt,
         });
       } else {
         for (const doc of existingDocs) {
           await this.documentRepository.updateDocument(doc.id, {
             status: targetStatus,
-            documentNumber: cleanNum,
+            documentNumber: storedDocNumber,
             verifiedAt,
           });
         }
