@@ -141,6 +141,14 @@ const env = cleanEnv(
       default: 'gongo-partner-documents',
       docs: 'Supabase Storage Bucket name',
     }),
+    PUBLIC_STORAGE_BUCKET: str({
+      default: 'gongo-uploads',
+      docs: 'Supabase Storage Public Bucket for vehicle images and public assets',
+    }),
+    PRIVATE_STORAGE_BUCKET: str({
+      default: 'gongo-partner-documents',
+      docs: 'Supabase Storage Private Bucket for partner documents and vehicle verification documents',
+    }),
     SUPABASE_STORAGE_PRESIGN_UPLOAD_EXPIRES_SECONDS: num({
       default: 900,
       docs: 'Presigned upload URL expiration in seconds (default: 15m)',

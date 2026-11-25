@@ -194,6 +194,7 @@ const env = cleanEnv(
     }),
 
     // AWS S3 Configuration
+    AWS_S3_ENABLED: bool({ default: false, docs: 'Enable AWS S3 storage provider' }),
     AWS_REGION: str({ default: 'ap-south-1', docs: 'AWS Region' }),
     AWS_ACCESS_KEY_ID: str({ default: '', docs: 'AWS Access Key ID' }),
     AWS_SECRET_ACCESS_KEY: str({ default: '', docs: 'AWS Secret Access Key' }),
@@ -298,13 +299,17 @@ if (env.isProduction) {
   if (env.AWS_S3_PUBLIC) {
     throw new Error('AWS_S3_PUBLIC must strictly be false in production');
   }
-  if (!process.env.AWS_ACCESS_KEY_ID || !process.env.AWS_SECRET_ACCESS_KEY) {
-    throw new Error(
-      'AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY are strictly required in production',
-    );
-  }
-  if (!process.env.AWS_S3_BUCKET) {
-    throw new Error('AWS_S3_BUCKET is strictly required in production');
+  const isAwsS3Required = env.AWS_S3_ENABLED
+    || Boolean(process.env.AWS_ACCESS_KEY_ID || process.env.AWS_SECRET_ACCESS_KEY);
+  if (isAwsS3Required) {
+    if (!process.env.AWS_ACCESS_KEY_ID || !process.env.AWS_SECRET_ACCESS_KEY) {
+      throw new Error(
+        'AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY are strictly required in production when AWS S3 is enabled',
+      );
+    }
+    if (!process.env.AWS_S3_BUCKET) {
+      throw new Error('AWS_S3_BUCKET is strictly required in production when AWS S3 is enabled');
+    }
   }
   if (env.CASHFREE_ENV === 'PRODUCTION') {
     if (

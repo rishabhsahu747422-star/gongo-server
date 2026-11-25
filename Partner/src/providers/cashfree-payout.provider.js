@@ -401,11 +401,14 @@ class CashfreePayoutProvider {
     const timestamp = headers['x-webhook-timestamp'] || headers['x-timestamp'];
     const signature = headers['x-webhook-signature'] || headers['x-signature'];
 
-    if (!timestamp || !signature || !this.secretKey) {
+    const secretKey = process.env.CASHFREE_PAYOUT_SECRET_KEY || this.secretKey;
+
+    if (!timestamp || !signature || !secretKey) {
       return false;
     }
 
-    // Clock skew replay protection: max 10m (600s) past, max 5m (300s) future
+    // Clock skew replay protection: default 24 hours to support Cashfree's retry schedule,
+    // max 5 minutes into the future for forward clock skew
     const nowSec = Math.floor(Date.now() / 1000);
     const tsNum = Number(timestamp);
     let tsSec;
@@ -415,17 +418,21 @@ class CashfreePayoutProvider {
       tsSec = Math.floor(Date.parse(timestamp) / 1000);
     }
 
-    if (Number.isNaN(tsSec) || (nowSec - tsSec) > 600 || (tsSec - nowSec) > 300) {
+    const maxToleranceSec = Number(process.env.CASHFREE_WEBHOOK_TOLERANCE_SECONDS || 86400);
+    const futureToleranceSec = 300;
+
+    if (Number.isNaN(tsSec) || (nowSec - tsSec) > maxToleranceSec || (tsSec - nowSec) > futureToleranceSec) {
       logger.warn('Cashfree payout webhook timestamp outside clock skew window', {
         webhookTimestamp: timestamp,
         currentTime: nowSec,
+        maxToleranceSec,
       });
       return false;
     }
 
     const dataToSign = `${timestamp}${rawBody}`;
     const expectedSignature = crypto
-      .createHmac('sha256', this.secretKey)
+      .createHmac('sha256', secretKey)
       .update(dataToSign)
       .digest('base64');
 

@@ -108,7 +108,8 @@ async function createPresignedGetUrl({ key, expiresInSeconds, responseContentDis
     const { getSupabase } = require('../config/supabase');
     const supabase = getSupabase();
     if (supabase && supabase.storage) {
-      const bucket = (key && (key.startsWith('partners/') || key.startsWith('partner/')))
+      const isDoc = key && (key.toLowerCase().includes('/documents/') || key.toLowerCase().includes('/kyc/'));
+      const bucket = isDoc
         ? 'gongo-partner-documents'
         : (env.SUPABASE_STORAGE_BUCKET || 'gongo-uploads');
 

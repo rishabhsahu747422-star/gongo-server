@@ -275,12 +275,18 @@ async function verifyIdToken(token, checkRevoked = true) {
 function resolveBucketForKey(key, explicitBucket) {
   if (explicitBucket) return explicitBucket;
   if (!key) return env.SUPABASE_STORAGE_BUCKET || 'gongo-uploads';
-  if (key.startsWith('partners/')) return 'gongo-partner-documents';
+  const lowerKey = key.toLowerCase();
   if (
-    key.startsWith('customers/') ||
+    lowerKey.startsWith('customers/') ||
     /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/(profile|aadhar-card|DL|others|documents|photo|aadhaar)/i.test(key)
   ) {
     return env.CUSTOMER_STORAGE_BUCKET || 'gongo-customers';
+  }
+  if (lowerKey.includes('/documents/') || lowerKey.includes('/kyc/')) {
+    return 'gongo-partner-documents';
+  }
+  if (lowerKey.includes('/images/') || lowerKey.includes('/profile/') || lowerKey.startsWith('banners/')) {
+    return env.SUPABASE_STORAGE_BUCKET || 'gongo-uploads';
   }
   return env.SUPABASE_STORAGE_BUCKET || 'gongo-uploads';
 }
