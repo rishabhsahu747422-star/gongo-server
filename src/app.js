@@ -58,7 +58,7 @@ function createApp() {
     crossOriginResourcePolicy: { policy: 'cross-origin' },
   }));
 
-  // Trust proxy is explicit, never blindly true.
+  // Trust proxy is explicit, never blindly true (forwarded headers are client-controlled otherwise).
   app.set('trust proxy', parseTrustProxy(env.TRUST_PROXY));
 
   // 3. CORS
@@ -66,7 +66,7 @@ function createApp() {
   const isProduction = env.NODE_ENV === 'production';
   app.use(cors({
     origin: (origin, callback) => {
-      // Requests without Origin header (mobile apps, server-to-server) are not CORS requests.
+      // Requests without an Origin header (native mobile apps, server-to-server) are not CORS requests.
       if (!origin || allowedOrigins.includes(origin)) {
         return callback(null, true);
       }
@@ -96,39 +96,13 @@ function createApp() {
   }));
   app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-  // 7. Startup Traffic Gate
-  // While background dependencies are connecting, return 503 Service Unavailable
-  // with Retry-After for API endpoints, while allowing health probes and OPTIONS to pass.
-  app.use((req, res, next) => {
-    // Health and probe routes must always respond
-    if (req.path === '/health' || req.path === '/health/live' || req.path === '/health/ready') {
-      return next();
-    }
-    // CORS preflight requests
-    if (req.method === 'OPTIONS') {
-      return next();
-    }
-    // Check readiness state
-    // eslint-disable-next-line global-require
-    const { isReady } = require('./lifecycle');
-    if (!isReady()) {
-      res.setHeader('Retry-After', '2');
-      return res.status(503).json({
-        status: 'starting',
-        message: 'Service is initializing dependencies. Please retry shortly.',
-        retryAfter: 2,
-      });
-    }
-    return next();
-  });
-
-  // 8. Mount Master Routes (/customer, /partner, /admin, /health)
+  // 7. Mount Master Routes (/customer, /partner, /admin, /health)
   app.use(routes);
 
-  // 9. 404 Route Not Found
+  // 8. 404 Route Not Found
   app.use(notFoundHandler);
 
-  // 10. Centralized Error Handler (4 arguments)
+  // 9. Centralized Error Handler (4 arguments)
   app.use(errorHandler);
 
   return app;

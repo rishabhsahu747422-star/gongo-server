@@ -271,41 +271,15 @@ function getStorageClient() {
 }
 
 /**
- * Resolves the appropriate Supabase Storage bucket based on storage key or explicit parameter.
- * Public images -> 'gongo-uploads'
- * Sensitive documents (KYC, RC, Insurance, etc.) -> 'gongo-partner-documents'
- *
- * @param {string} key - Storage object path/key
- * @param {string} [explicitBucket] - Optional explicit bucket override
- * @returns {string} Bucket name
- */
-function resolveBucket(key, explicitBucket) {
-  if (explicitBucket) return explicitBucket;
-  const publicBucket = process.env.PUBLIC_STORAGE_BUCKET || env.PUBLIC_STORAGE_BUCKET || 'gongo-uploads';
-  const privateBucket = process.env.PRIVATE_STORAGE_BUCKET || env.PRIVATE_STORAGE_BUCKET || env.SUPABASE_STORAGE_BUCKET || 'gongo-partner-documents';
-
-  if (!key) return privateBucket;
-  const lowerKey = key.toLowerCase();
-  if (lowerKey.includes('/documents/') || lowerKey.includes('/kyc/')) {
-    return privateBucket;
-  }
-  if (lowerKey.includes('/images/') || lowerKey.includes('/profile/') || lowerKey.startsWith('banners/')) {
-    return publicBucket;
-  }
-  return privateBucket;
-}
-
-/**
  * Generates a presigned upload URL for direct client file upload via Supabase Storage.
  *
  * @param {object} params
  * @param {string} params.key - Storage object path/key
  * @param {string} params.contentType - MIME type of the upload
  * @param {number} [params.expiresInSeconds] - Expiry in seconds
- * @param {string} [params.bucket] - Optional target bucket
  * @returns {Promise<{ uploadUrl: string, key: string, expiresInSeconds: number, headers: object }>}
  */
-async function createPresignedPutUrl({ key, contentType, expiresInSeconds, bucket }) {
+async function createPresignedPutUrl({ key, contentType, expiresInSeconds }) {
   const expiry = expiresInSeconds || env.SUPABASE_STORAGE_PRESIGN_UPLOAD_EXPIRES_SECONDS || 900;
 
   if (mockPresignerFn) {
@@ -322,14 +296,13 @@ async function createPresignedPutUrl({ key, contentType, expiresInSeconds, bucke
   }
 
   const client = getStorageClient();
-  const targetBucket = resolveBucket(key, bucket);
+  const bucket = env.SUPABASE_STORAGE_BUCKET || 'gongo-partner-documents';
 
   try {
-    const { data, error } = await client.storage.from(targetBucket).createSignedUploadUrl(key);
+    const { data, error } = await client.storage.from(bucket).createSignedUploadUrl(key);
     if (error || !data) {
       logger.error('Failed to create signed upload URL in Supabase Storage', {
         key,
-        bucket: targetBucket,
         error: error?.message,
       });
       throw new Error(`Failed to generate signed upload URL: ${error?.message || 'Storage error'}`);
@@ -354,7 +327,6 @@ async function createPresignedPutUrl({ key, contentType, expiresInSeconds, bucke
   } catch (err) {
     logger.error('Failed to create signed upload URL in Supabase Storage', {
       key,
-      bucket: targetBucket,
       error: err?.message,
     });
     throw new Error(`Failed to generate signed upload URL: ${err?.message || 'Storage error'}`);
@@ -368,10 +340,9 @@ async function createPresignedPutUrl({ key, contentType, expiresInSeconds, bucke
  * @param {object} params
  * @param {string} params.key - Storage object path/key
  * @param {number} [params.expiresInSeconds] - Expiry in seconds
- * @param {string} [params.bucket] - Target bucket
  * @returns {Promise<{ downloadUrl: string, expiresInSeconds: number }>}
  */
-async function createPresignedGetUrl({ key, expiresInSeconds, bucket }) {
+async function createPresignedGetUrl({ key, expiresInSeconds }) {
   const expiry = expiresInSeconds || env.SUPABASE_STORAGE_PRESIGN_DOWNLOAD_EXPIRES_SECONDS || 300;
 
   if (mockPresignerFn) {
@@ -383,32 +354,13 @@ async function createPresignedGetUrl({ key, expiresInSeconds, bucket }) {
   }
 
   const client = getStorageClient();
-  const targetBucket = resolveBucket(key, bucket);
+  const bucket = env.SUPABASE_STORAGE_BUCKET || 'gongo-partner-documents';
 
   try {
-    let { data, error } = await client.storage.from(targetBucket).createSignedUrl(key, expiry);
-
-    // If not found in target bucket and no explicit bucket was passed, check alternate bucket
-    if ((error || !data?.signedUrl) && !bucket) {
-      const altBucket = targetBucket === 'gongo-partner-documents' ? 'gongo-uploads' : 'gongo-partner-documents';
-      const altRes = await client.storage.from(altBucket).createSignedUrl(key, expiry);
-      if (!altRes.error && altRes.data?.signedUrl) {
-        data = altRes.data;
-        error = null;
-      }
-    }
-
-    if (error || !data?.signedUrl) {
-      if (process.env.NODE_ENV !== 'production' || env.isDevelopment || env.isTest) {
-        const baseEndpoint = env.SUPABASE_URL || 'https://mtfljykvxyslhdvpfcil.supabase.co';
-        return {
-          downloadUrl: `${baseEndpoint}/storage/v1/object/sign/${targetBucket}/${key}?token=mock-signed-token`,
-          expiresInSeconds: expiry,
-        };
-      }
+    const { data, error } = await client.storage.from(bucket).createSignedUrl(key, expiry);
+    if (error || !data) {
       logger.error('Failed to create signed download URL in Supabase Storage', {
         key,
-        bucket: targetBucket,
         error: error?.message,
       });
       throw new Error(`Failed to generate signed download URL: ${error?.message || 'Storage error'}`);
@@ -425,13 +377,6 @@ async function createPresignedGetUrl({ key, expiresInSeconds, bucket }) {
       expiresInSeconds: expiry,
     };
   } catch (err) {
-    if (process.env.NODE_ENV !== 'production' || env.isDevelopment || env.isTest) {
-      const baseEndpoint = env.SUPABASE_URL || 'https://mtfljykvxyslhdvpfcil.supabase.co';
-      return {
-        downloadUrl: `${baseEndpoint}/storage/v1/object/sign/${targetBucket}/${key}?token=mock-signed-token`,
-        expiresInSeconds: expiry,
-      };
-    }
     logger.error('Failed to create signed download URL in Supabase Storage', {
       key,
       error: err?.message,
@@ -441,37 +386,14 @@ async function createPresignedGetUrl({ key, expiresInSeconds, bucket }) {
 }
 
 /**
- * Returns a permanent public URL for a non-sensitive asset in the public bucket.
- * Refuses to return a public URL for private KYC or vehicle documents.
- *
- * @param {string} key - Storage key
- * @param {string} [bucket='gongo-uploads'] - Bucket name
- * @returns {string|null}
- */
-function getPublicUrl(key, bucket = 'gongo-uploads') {
-  if (!key || typeof key !== 'string') return null;
-  const lowerKey = key.toLowerCase();
-  if (lowerKey.includes('/documents/') || lowerKey.includes('/kyc/')) {
-    logger.error('SECURITY ERROR: Refusing to generate public URL for private document', { key });
-    return null;
-  }
-  const client = getStorageClient();
-  const { data } = client.storage.from(bucket).getPublicUrl(key);
-  if (data?.publicUrl) return data.publicUrl;
-  const baseEndpoint = env.SUPABASE_URL || 'https://mtfljykvxyslhdvpfcil.supabase.co';
-  return `${baseEndpoint}/storage/v1/object/public/${bucket}/${key}`;
-}
-
-/**
  * Verifies that an object exists in Supabase Storage and returns its metadata.
  *
  * @param {object} params
  * @param {string} params.key - Storage object path/key
- * @param {string} [params.bucket] - Optional bucket override
  * @returns {Promise<{ contentLength: number, contentType: string,
  *   eTag?: string, lastModified?: Date }>}
  */
-async function headObject({ key, bucket }) {
+async function headObject({ key }) {
   if (mockStorageClient && typeof mockStorageClient.send === 'function') {
     try {
       const response = await mockStorageClient.send({ key });
@@ -494,20 +416,10 @@ async function headObject({ key, bucket }) {
   }
 
   const client = getStorageClient();
-  const targetBucket = resolveBucket(key, bucket);
+  const bucket = env.SUPABASE_STORAGE_BUCKET || 'gongo-partner-documents';
 
   try {
-    let { data, error } = await client.storage.from(targetBucket).info(key);
-
-    if ((error || !data) && !bucket) {
-      const altBucket = targetBucket === 'gongo-partner-documents' ? 'gongo-uploads' : 'gongo-partner-documents';
-      const altRes = await client.storage.from(altBucket).info(key);
-      if (!altRes.error && altRes.data) {
-        data = altRes.data;
-        error = null;
-      }
-    }
-
+    const { data, error } = await client.storage.from(bucket).info(key);
     if (error || !data) {
       const isNotFound = error?.statusCode === 404
         || error?.status === 404
@@ -547,20 +459,19 @@ async function headObject({ key, bucket }) {
  *
  * @param {object} params
  * @param {string} params.key - Storage object path/key
- * @param {string} [params.bucket] - Optional bucket override
  * @returns {Promise<{ success: boolean }>}
  */
-async function deleteObject({ key, bucket }) {
+async function deleteObject({ key }) {
   if (mockStorageClient && typeof mockStorageClient.send === 'function') {
     await mockStorageClient.send({ key });
     return { success: true };
   }
 
   const client = getStorageClient();
-  const targetBucket = resolveBucket(key, bucket);
+  const bucket = env.SUPABASE_STORAGE_BUCKET || 'gongo-partner-documents';
 
   try {
-    const { error } = await client.storage.from(targetBucket).remove([key]);
+    const { error } = await client.storage.from(bucket).remove([key]);
     if (error) {
       logger.error('Error executing Supabase Storage deleteObject', { key, error: error.message });
       throw error;
@@ -578,10 +489,9 @@ async function deleteObject({ key, bucket }) {
  * @param {object} params
  * @param {string} params.key - Storage object path/key
  * @param {number} [params.maxBytes=16] - Maximum bytes to fetch (default 16)
- * @param {string} [params.bucket] - Optional bucket override
  * @returns {Promise<Buffer>}
  */
-async function getObjectHeaderBytes({ key, maxBytes = 16, bucket }) {
+async function getObjectHeaderBytes({ key, maxBytes = 16 }) {
   if (mockStorageClient && typeof mockStorageClient.send === 'function') {
     try {
       const response = await mockStorageClient.send({ key, maxBytes });
@@ -605,20 +515,10 @@ async function getObjectHeaderBytes({ key, maxBytes = 16, bucket }) {
     }
   }
   const client = getStorageClient();
-  const targetBucket = resolveBucket(key, bucket);
+  const bucket = env.SUPABASE_STORAGE_BUCKET || 'gongo-partner-documents';
 
   try {
-    let { data, error } = await client.storage.from(targetBucket).download(key);
-
-    if ((error || !data) && !bucket) {
-      const altBucket = targetBucket === 'gongo-partner-documents' ? 'gongo-uploads' : 'gongo-partner-documents';
-      const altRes = await client.storage.from(altBucket).download(key);
-      if (!altRes.error && altRes.data) {
-        data = altRes.data;
-        error = null;
-      }
-    }
-
+    const { data, error } = await client.storage.from(bucket).download(key);
     if (error || !data) {
       const isNotFound = error?.statusCode === 404
         || error?.status === 404
@@ -751,8 +651,6 @@ module.exports = {
   // Storage operations
   createPresignedPutUrl,
   createPresignedGetUrl,
-  getPublicUrl,
-  resolveBucket,
   headObject,
   deleteObject,
   getObjectHeaderBytes,

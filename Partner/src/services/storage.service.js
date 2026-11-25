@@ -13,9 +13,6 @@ const { ValidationError, ForbiddenError, NotFoundError } = require('../errors');
 const env = require('../config/env');
 const logger = require('../config/logger');
 
-const getPublicBucket = () => process.env.PUBLIC_STORAGE_BUCKET || env.PUBLIC_STORAGE_BUCKET || 'gongo-uploads';
-const getPrivateBucket = () => process.env.PRIVATE_STORAGE_BUCKET || env.PRIVATE_STORAGE_BUCKET || env.SUPABASE_STORAGE_BUCKET || 'gongo-partner-documents';
-
 class StorageService {
   constructor() {
     this.partnerRepository = new PartnerRepository();
@@ -63,37 +60,30 @@ class StorageService {
       }
     }
 
-    // Construct backend-controlled, strictly isolated storage key and target bucket
+    // Construct backend-controlled, strictly isolated S3 key
     const fileUuid = crypto.randomUUID();
     let storageKey;
-    let targetBucket;
 
     if (entityType === 'PROFILE_IMAGE') {
       storageKey = `partners/${partnerId}/profile/${fileUuid}${fileExtension}`;
-      targetBucket = getPublicBucket();
     } else if (entityType === 'KYC_DOCUMENT') {
       storageKey = `partners/${partnerId}/kyc/${documentType.toLowerCase()}/${fileUuid}${fileExtension}`;
-      targetBucket = getPrivateBucket();
     } else if (entityType === 'VEHICLE_IMAGE') {
       storageKey = `partners/${partnerId}/vehicles/${vehicleId}/images/${fileUuid}${fileExtension}`;
-      targetBucket = getPublicBucket();
     } else if (entityType === 'VEHICLE_DOCUMENT') {
       storageKey = `partners/${partnerId}/vehicles/${vehicleId}/documents/${documentType.toLowerCase()}/${fileUuid}${fileExtension}`;
-      targetBucket = getPrivateBucket();
     } else if (entityType === 'SUPPORT_ATTACHMENT') {
       storageKey = `partners/${partnerId}/support/${fileUuid}${fileExtension}`;
-      targetBucket = getPrivateBucket();
     }
 
     const expiresInSeconds = env.AWS_S3_PRESIGN_UPLOAD_EXPIRES_SECONDS;
     const expiresAt = new Date(Date.now() + expiresInSeconds * 1000);
 
-    // Generate Presigned PUT URL for appropriate bucket
+    // Generate AWS S3 Presigned PUT URL
     const presigned = await storageProvider.createPresignedPutUrl({
       key: storageKey,
       contentType,
       expiresInSeconds,
-      bucket: targetBucket,
     });
 
     // Record upload session in database
@@ -180,15 +170,10 @@ class StorageService {
       throw new ValidationError('Upload session has expired. Please initiate a new upload session.');
     }
 
-    // Determine target bucket based on entity_type
-    const targetBucket = (upload.entity_type === 'VEHICLE_IMAGE' || upload.entity_type === 'PROFILE_IMAGE')
-      ? getPublicBucket()
-      : getPrivateBucket();
-
-    // Verify binary existence in storage bucket
+    // Verify binary existence in private S3 bucket
     let headData;
     try {
-      headData = await storageProvider.headObject({ key: upload.storage_key, bucket: targetBucket });
+      headData = await storageProvider.headObject({ key: upload.storage_key });
     } catch (err) {
       if (err.notFound || err.code === 'STORAGE_OBJECT_NOT_FOUND' || err.code === 'S3_OBJECT_NOT_FOUND') {
         throw new ValidationError(
@@ -201,7 +186,7 @@ class StorageService {
     // Verify size limits
     if (upload.expected_size_bytes && headData.contentLength > Number(upload.expected_size_bytes)) {
       await storageProvider.deleteObject({ key: upload.storage_key }).catch((delErr) => {
-        logger.error('Failed to remove oversized storage object', { key: upload.storage_key, error: delErr.message });
+        logger.error('Failed to remove oversized S3 object', { key: upload.storage_key, error: delErr.message });
       });
       await storageUploadRepository.markStatus({ id: upload.id, partnerId, status: 'FAILED' });
       throw new ValidationError(
@@ -215,18 +200,17 @@ class StorageService {
       headerBytes = await storageProvider.getObjectHeaderBytes({
         key: upload.storage_key,
         maxBytes: 16,
-        bucket: targetBucket,
       });
     } catch (err) {
-      logger.error('Failed to read header bytes from storage', { key: upload.storage_key, error: err.message });
+      logger.error('Failed to read header bytes from S3', { key: upload.storage_key, error: err.message });
       throw new ValidationError('Could not verify uploaded file header');
     }
 
     const declaredContentType = upload.content_type || headData.contentType;
     const isMagicValid = storageProvider.validateMagicBytes(headerBytes, declaredContentType);
     if (!isMagicValid) {
-      await storageProvider.deleteObject({ key: upload.storage_key, bucket: targetBucket }).catch((delErr) => {
-        logger.error('Failed to remove invalid signature storage object', { key: upload.storage_key, error: delErr.message });
+      await storageProvider.deleteObject({ key: upload.storage_key }).catch((delErr) => {
+        logger.error('Failed to remove invalid signature S3 object', { key: upload.storage_key, error: delErr.message });
       });
       await storageUploadRepository.markStatus({ id: upload.id, partnerId, status: 'FAILED' }).catch(() => {});
       throw new ValidationError('Uploaded file binary signature does not match declared content type.');
@@ -469,15 +453,10 @@ class StorageService {
       throw new ForbiddenError('Access denied: You do not have permission to access this resource');
     }
 
-    const targetBucket = (storageKey.includes('/images/') || storageKey.includes('/profile/'))
-      ? getPublicBucket()
-      : getPrivateBucket();
-
     const expiresInSeconds = env.AWS_S3_PRESIGN_DOWNLOAD_EXPIRES_SECONDS;
     const access = await storageProvider.createPresignedGetUrl({
       key: storageKey,
       expiresInSeconds,
-      bucket: targetBucket,
     });
 
     return {

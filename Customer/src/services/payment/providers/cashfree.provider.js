@@ -440,15 +440,14 @@ class CashfreeProvider extends PaymentProvider {
     const timestamp = headers['x-webhook-timestamp'] || headers['x-timestamp'];
     const signature = headers['x-webhook-signature'] || headers['x-signature'];
     // No literal fallback: a publicly known key would make signatures forgeable.
-    const secretKey = process.env.CASHFREE_WEBHOOK_SECRET || this.secretKey || env.CASHFREE_SECRET_KEY;
+    const secretKey = this.secretKey || env.CASHFREE_SECRET_KEY;
 
     if (!timestamp || !signature || !secretKey) {
       return false;
     }
 
     // Replay protection: verify timestamp is within acceptable window
-    // (default 24 hours to support Cashfree's documented 30-minute automatic retry schedule
-    // and manual dashboard redeliveries, max 5 minutes into the future for forward clock skew)
+    // (max 10 minutes in past, max 5 minutes into the future)
     const nowSec = Math.floor(Date.now() / 1000);
     const tsNum = Number(timestamp);
     let tsSec;
@@ -458,14 +457,10 @@ class CashfreeProvider extends PaymentProvider {
       tsSec = Math.floor(Date.parse(timestamp) / 1000);
     }
 
-    const maxToleranceSec = Number(process.env.CASHFREE_WEBHOOK_TOLERANCE_SECONDS || 86400);
-    const futureToleranceSec = 300;
-
-    if (Number.isNaN(tsSec) || (nowSec - tsSec) > maxToleranceSec || (tsSec - nowSec) > futureToleranceSec) {
+    if (Number.isNaN(tsSec) || (nowSec - tsSec) > 600 || (tsSec - nowSec) > 300) {
       logger.warn('Cashfree webhook timestamp is outside acceptable clock skew window', {
         webhookTimestamp: timestamp,
         currentTime: nowSec,
-        maxToleranceSec,
       });
       return false;
     }

@@ -24,14 +24,12 @@ async function resolveSignedUrl(storageKey, expiresInSeconds = 86400) {
 
 module.exports = {
   resolveSignedUrl,
-  getPublicUrl: supabaseProvider.getPublicUrl,
   createPresignedPutUrl: supabaseProvider.createPresignedPutUrl,
   createPresignedGetUrl: supabaseProvider.createPresignedGetUrl,
   headObject: supabaseProvider.headObject,
   deleteObject: supabaseProvider.deleteObject,
   getObjectHeaderBytes: supabaseProvider.getObjectHeaderBytes,
   validateMagicBytes: supabaseProvider.validateMagicBytes,
-  resolveBucket: supabaseProvider.resolveBucket,
   setMockStorageClient: supabaseProvider.setMockStorageClient,
   setMockPresigner: supabaseProvider.setMockPresigner,
   resetStorageClient: supabaseProvider.resetSupabaseClient,

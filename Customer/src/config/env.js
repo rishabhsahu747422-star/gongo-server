@@ -48,14 +48,6 @@ const trustProxyValidator = makeValidator((value) => {
   return trimmed;
 });
 
-const customReporter = ({ errors }) => {
-  const errorKeys = Object.keys(errors);
-  if (errorKeys.length > 0) {
-    const messages = errorKeys.map((key) => `${key}: ${errors[key].message || errors[key]}`);
-    throw new Error(`Invalid environment variables:\n${messages.join('\n')}`);
-  }
-};
-
 /**
  * Validates and freezes all required environment variables at startup.
  * The application will refuse to start if any variable is missing or malformed.
@@ -382,8 +374,6 @@ const env = cleanEnv(process.env, {
     devDefault: true,
     docs: 'Enables development-only dummy payment bypass. Strictly disabled outside development.',
   }),
-}, {
-  reporter: customReporter,
 });
 
 if (env.DB_POOL_MIN < 0) {
@@ -419,9 +409,6 @@ if (env.NODE_ENV === 'production') {
   }
   if (process.env.USE_REDIS_MOCK === 'true') {
     problems.push('USE_REDIS_MOCK must not be enabled in production');
-  }
-  if (!process.env.AADHAAR_HMAC_SECRET || process.env.AADHAAR_HMAC_SECRET === 'gongo-aadhaar-identity-hmac-secret-v1' || process.env.AADHAAR_HMAC_SECRET.length < 32) {
-    problems.push('AADHAAR_HMAC_SECRET must be set to a secure, unique production value (>= 32 chars) in production');
   }
   // The defaults point at a hardcoded development project; production must name its own.
   if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {

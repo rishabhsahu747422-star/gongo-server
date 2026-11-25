@@ -9,12 +9,6 @@ function isCustomerPath(path) {
   return path.startsWith('customers/') || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/(profile|aadhar-card|DL|others|documents|photo|aadhaar)/i.test(path);
 }
 
-function isPartnerPrivateDocumentPath(path) {
-  if (!path) return false;
-  const p = path.toLowerCase();
-  return p.includes('/kyc/') || p.includes('/documents/') || /\/(rc|insurance|puc|fitness|pan|gst|shop_establishment)\//.test(p);
-}
-
 let mockStorageProvider = null;
 
 function setMockStorageProvider(mock) {
@@ -39,7 +33,7 @@ async function createPresignedUploadUrl({ bucket, path }) {
   }
 
   const targetBucket = bucket
-    || (isCustomerPath(path) ? 'gongo-customers' : (isPartnerPrivateDocumentPath(path) ? 'gongo-partner-documents' : (env.SUPABASE_STORAGE_BUCKET || 'gongo-uploads')));
+    || (isCustomerPath(path) ? 'gongo-customers' : (env.SUPABASE_STORAGE_BUCKET || 'gongo-uploads'));
   const targetPath = path || `uploads/${Date.now()}`;
 
   try {
@@ -88,7 +82,7 @@ async function createPresignedDownloadUrl({ bucket, path, expiresInSeconds = 300
   }
 
   const targetBucket = bucket
-    || (isCustomerPath(path) ? 'gongo-customers' : (isPartnerPrivateDocumentPath(path) ? 'gongo-partner-documents' : (env.SUPABASE_STORAGE_BUCKET || 'gongo-uploads')));
+    || (isCustomerPath(path) ? 'gongo-customers' : (env.SUPABASE_STORAGE_BUCKET || 'gongo-uploads'));
 
   try {
     const supabase = getSupabaseClient();
@@ -120,9 +114,9 @@ async function createPresignedDownloadUrl({ bucket, path, expiresInSeconds = 300
  * @returns {string} Public URL
  */
 function getPublicUrl(path, bucket) {
-  if (isCustomerPath(path) || isPartnerPrivateDocumentPath(path)) {
-    logger.error('CRITICAL: Refusing to generate public URL for private document', { path });
-    throw new Error('SECURITY VIOLATION: Cannot generate public URL for private partner document');
+  if (isCustomerPath(path)) {
+    logger.error('CRITICAL: Refusing to generate public URL for private customer object', { path });
+    return '';
   }
   const targetBucket = bucket || env.SUPABASE_STORAGE_BUCKET || 'gongo-uploads';
   const supabase = getSupabaseClient();

@@ -62,28 +62,4 @@ if (env.DB_POOL_MIN > env.DB_POOL_MAX) {
   throw new Error(`DB_POOL_MIN (${env.DB_POOL_MIN}) must be <= DB_POOL_MAX (${env.DB_POOL_MAX})`);
 }
 
-if (env.NODE_ENV === 'production') {
-  if (env.DB_POOL_MIN !== 0) {
-    throw new Error('DB_POOL_MIN must be 0 in production for Supabase session pooler compatibility');
-  }
-  if (env.DB_POOL_MAX > 3) {
-    throw new Error(`DB_POOL_MAX must be <= 3 in production (configured: ${env.DB_POOL_MAX}) to protect Supabase pooler limit`);
-  }
-  if (!env.TRUST_PROXY || env.TRUST_PROXY === 'false') {
-    throw new Error("TRUST_PROXY must be configured (e.g. '1') behind a production reverse proxy");
-  }
-  if (!env.CORS_ORIGINS && !process.env.CORS_ORIGIN) {
-    throw new Error('CORS_ORIGINS or CORS_ORIGIN must be explicitly configured with HTTPS domain(s) in production');
-  }
-  if (process.env.USE_REDIS_MOCK === 'true') {
-    throw new Error('USE_REDIS_MOCK must not be enabled in production');
-  }
-  if (process.env.DEV_DUMMY_PAYMENT_ENABLED === 'true') {
-    throw new Error('DEV_DUMMY_PAYMENT_ENABLED must not be enabled in production');
-  }
-  if (process.env.DEV_AUTH_BYPASS_ENABLED === 'true') {
-    throw new Error('DEV_AUTH_BYPASS_ENABLED must not be enabled in production');
-  }
-}
-
 module.exports = env;

@@ -234,10 +234,8 @@ class PublicVehicleRepository extends BaseRepository {
             if (match) {
               bucket = match[1];
               key = match[2];
-            } else if (imageUrl.includes('/documents/') || imageUrl.includes('/kyc/')) {
+            } else if (imageUrl.startsWith('partners/')) {
               bucket = 'gongo-partner-documents';
-            } else {
-              bucket = 'gongo-uploads';
             }
             const res = await createPresignedDownloadUrl({ bucket, path: key.replace(/^\/+/, ''), expiresInSeconds: 86400 });
             if (res?.downloadUrl) {
