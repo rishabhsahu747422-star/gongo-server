@@ -98,6 +98,10 @@ async function startServer() {
     app = createApp();
   } catch (err) {
     logError(`[FATAL] Startup failed: ${err.message}`);
+    if (err.requireStack && err.requireStack.length > 0) {
+      logError(`Require stack:\n  - ${err.requireStack.join('\n  - ')}`);
+    }
+    if (err.stack) logError(err.stack);
     process.exit(1);
     return null;
   }
@@ -107,6 +111,7 @@ async function startServer() {
   } catch (err) {
     if (env.NODE_ENV === 'production') {
       logError(`[FATAL] Dependency check failed: ${err.message}`);
+      if (err.stack) logError(err.stack);
       await lifecycle.shutdownAll(logError);
       process.exit(1);
       return null;
@@ -114,10 +119,11 @@ async function startServer() {
     logError(`Dependency check failed — starting in degraded mode (non-production only): ${err.message}`);
   }
 
-  const port = Number(env.PORT || 8080);
+  const port = Number(process.env.PORT || env.PORT || 8080);
+  const host = process.env.HOST || env.HOST || '0.0.0.0';
 
-  server = app.listen(port, env.HOST, () => {
-    log(`Listening on http://${env.HOST}:${port} [${env.NODE_ENV}]`);
+  server = app.listen(port, host, () => {
+    log(`Listening on http://${host}:${port} [${env.NODE_ENV}]`);
     log('Mounted sub-apps: /api/v1/customer, /api/v1/partner, /api/v1/admin');
     log('Probes: /health, /health/live, /health/ready');
 
@@ -137,6 +143,7 @@ async function startServer() {
       logError(`[FATAL] Port ${port} is already in use.`);
     } else {
       logError(`[FATAL] Server error: ${err.message}`);
+      if (err.stack) logError(err.stack);
     }
     process.exit(1);
   });

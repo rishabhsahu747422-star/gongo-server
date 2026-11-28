@@ -4,7 +4,7 @@
   "description": "GONGO Partner Backend — Production-grade marketplace backend for vehicle rental partners",
   "main": "src/server.js",
   "engines": {
-    "node": ">=18.0.0",
+    "node": ">=22.0.0",
     "npm": ">=9.0.0"
   },
   "scripts": {

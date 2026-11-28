@@ -7,12 +7,12 @@
 # Migrations are NOT run on start — see docs/DEPLOYMENT.md.
 # ==============================================================================
 
-FROM node:20-alpine AS dependencies
+FROM node:22-alpine AS dependencies
 WORKDIR /usr/src/app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 
-FROM node:20-alpine AS runtime
+FROM node:22-alpine AS runtime
 WORKDIR /usr/src/app
 
 ENV NODE_ENV=production \
